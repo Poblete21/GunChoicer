@@ -56,13 +56,13 @@
         */
         // =========================================================================================
         const firebaseConfig = {
-            apiKey: "AIzaSyAF06nJHV5zYb4W-vUrrn8MJ1Ft_5CjV_s",
-            authDomain: "gunchoicer-21f0f.firebaseapp.com",
-            projectId: "gunchoicer-21f0f",
-            storageBucket: "gunchoicer-21f0f.firebasestorage.app",
-            messagingSenderId: "244865223861",
-            appId: "1:244865223861:web:7ab86ba9bece24f70d02fc",
-            measurementId: "G-JNWD47M3GV"
+            apiKey: "AIzaSyAF06nJHV5zYb4W-vUrrn8MJ1Ft_5CjV_s", // <--- REEMPLAZA ESTO
+            authDomain: "gunchoicer-21f0f.firebaseapp.com", // <--- REEMPLAZA ESTO
+            projectId: "gunchoicer-21f0f", // <--- REEMPLAZA ESTO
+            storageBucket: "gunchoicer-21f0f.firebasestorage.app", // <--- REEMPLAZA ESTO
+            messagingSenderId: "244865223861", // <--- REEMPLAZA ESTO
+            appId: "1:244865223861:web:7ab86ba9bece24f70d02fc", // <--- REEMPLAZA ESTO
+            measurementId: "G-JNWD47M3GV" // <--- REEMPLAZA ESTO (si tienes)
         };
 
         console.log("Firebase: Iniciando inicialización de la aplicación.");
@@ -110,7 +110,7 @@
             window.firebaseQuery = query;
             window.firebaseWhere = where; // Añadido para consultas
             window.firebaseServerTimestamp = serverTimestamp;
-            window.firebaseGetDocs = getDocs; // <-- ¡AQUÍ ESTÁ LA CORRECCIÓN!
+            window.firebaseGetDocs = getDocs;
 
             // Define un appId global consistente
             window.__app_id = 'gunchoicer-multiplayer-app'; // Nuevo ID de aplicación para multiplayer
@@ -131,11 +131,12 @@
             firebaseApp, firebaseAuth, firebaseSignInAnonymously, firebaseOnAuthStateChanged,
             firebaseFirestore, firebaseCollection, firebaseAddDoc, firebaseOnSnapshot,
             firebaseDoc, firebaseGetDoc, firebaseUpdateDoc, firebaseQuery, firebaseWhere, firebaseServerTimestamp,
-            firebaseGetDocs // <-- ¡AQUÍ ESTÁ LA CORRECCIÓN!
+            firebaseGetDocs
         } = window;
 
         const App = () => {
-            const [currentMode, setCurrentMode] = React.useState('menu'); // 'menu', 'individual', 'multiplayerLobby', 'multiplayerGame'
+            // currentMode ahora puede ser: 'menu', 'individual', 'multiplayerLobby', 'multiplayerRoom', 'multiplayerGame'
+            const [currentMode, setCurrentMode] = React.useState('menu'); 
             const [gameState, setGameState] = React.useState('idle'); // 'idle', 'countdown', 'wait', 'green', 'result'
             const [countdownValue, setCountdownValue] = React.useState(3);
             const [startTime, setStartTime] = React.useState(0);
@@ -199,44 +200,41 @@
                         console.log("Multiplayer Listener: Datos de la sala actualizados:", data);
                         setRoomData(data);
 
+                        // Si estamos en el lobby multijugador y la sala pasa a 'countdown', cambiar a multiplayerGame
+                        if (currentMode === 'multiplayerRoom' && data.status === 'countdown') {
+                            setCurrentMode('multiplayerGame');
+                        }
+
                         // Lógica de sincronización del juego desde el host
                         if (currentMode === 'multiplayerGame') {
-                            // Sincronizar gameState, countdownValue y startTime
-                            // El cliente que NO es host solo lee estos estados para replicar el juego
                             if (data.status && data.status !== gameState) {
                                 setGameState(data.status);
                             }
                             if (data.countdownValue !== undefined && data.countdownValue !== countdownValue) {
                                 setCountdownValue(data.countdownValue);
                             }
-                            // Si el estado cambia a 'green' y no hemos capturado el startTime, lo capturamos
                             if (data.status === 'green' && startTime === 0 && data.currentRoundStartTime) {
-                                // Usamos el serverTimestamp como referencia para la sincronización
-                                // Podríamos usar una estimación de la latencia si fuera más crítico
                                 const now = performance.now();
                                 const serverTimeMs = data.currentRoundStartTime.toMillis();
-                                setStartTime(now - (Date.now() - serverTimeMs)); // Ajusta el startTime localmente
+                                setStartTime(now - (Date.now() - serverTimeMs));
                                 console.log(`Multiplayer: ¡DISPARA! (Sincronizado) con tiempo de inicio ${data.currentRoundStartTime.toMillis()}ms`);
-                                // Poner un timeout para el caso de que nadie dispare
+                                
                                 multiplayerRoundEndTimeoutRef.current = setTimeout(() => {
-                                    // Si no hemos reaccionado, y el juego sigue en verde o esperando, marcar como no reaccionó
                                     const localPlayer = data.player1.id === userId ? data.player1 : data.player2;
                                     if (localPlayer.reactionTime === 0 && !localPlayer.falseStart) {
                                         if (isHost) {
-                                            // Si soy host y no reaccioné, marco el mío y compruebo el otro
                                             updateDoc(roomDocRef, {
                                                 [`player${localPlayer.id === data.player1.id ? 1 : 2}.reactionTime`]: 9999,
                                                 status: 'result'
                                             });
                                         } else {
-                                            // Si no soy host y no reaccioné, solo marco el mío y espero al host
                                             updateDoc(roomDocRef, {
                                                 [`player${localPlayer.id === data.player1.id ? 1 : 2}.reactionTime`]: 9999
                                             });
                                         }
                                     }
                                     console.log("Multiplayer: Tiempo límite de reacción alcanzado para esta ronda.");
-                                }, 2000); // 2 segundos para reaccionar después de la luz verde
+                                }, 2000);
                             }
                         }
                     } else {
@@ -257,7 +255,7 @@
                     unsubscribe();
                     clearAllTimeouts(); // Limpiar timeouts al salir de la sala
                 };
-            }, [isAuthReady, currentRoomId, currentMode, gameState]); // Dependencias para re-ejecutar el efecto
+            }, [isAuthReady, currentRoomId, currentMode, gameState, userId, isHost, startTime, countdownValue]); // Dependencias actualizadas para el listener de la sala
 
 
             // --------------------------------------------------
@@ -294,8 +292,8 @@
                 setReactionTime(0);
                 setStartTime(0);
                 clearAllTimeouts();
-                // Limpiar estados de multiplayer al cambiar de modo fuera del multiplayerLobby/Game
-                if (currentMode !== 'multiplayerLobby' && currentMode !== 'multiplayerGame') {
+                // Limpiar estados de multiplayer al cambiar de modo fuera del multiplayerLobby/Room/Game
+                if (currentMode === 'menu' || currentMode === 'individual') { // Solo limpiar si volvemos a modos no multiplayer
                     setCurrentRoomId(null);
                     setRoomData(null);
                     setIsHost(false);
@@ -397,20 +395,18 @@
                 }
 
                 try {
-                    // Verificar si la sala ya existe
                     const roomsRef = firebaseCollection(dbRef.current, `artifacts/${appId.current}/public/data/rooms`);
                     const q = firebaseQuery(roomsRef, firebaseWhere("roomId", "==", roomNameInput));
-                    const querySnapshot = await firebaseGetDocs(q); // Usar firebaseGetDocs
+                    const querySnapshot = await firebaseGetDocs(q);
 
                     if (!querySnapshot.empty) {
                         displayMessageBox("Ya existe una sala con ese nombre. Por favor, elige otro.");
                         return;
                     }
 
-                    // Crear la nueva sala
                     const newRoomData = {
                         roomId: roomNameInput,
-                        password: passwordInput, // Considerar hashing en producción
+                        password: passwordInput,
                         status: 'waiting',
                         hostId: userId,
                         player1: {
@@ -428,12 +424,13 @@
                             falseStart: false
                         },
                         currentRoundStartTime: null,
+                        winnerName: null, // Inicializar winnerName
                         lastUpdated: firebaseServerTimestamp()
                     };
                     const docRef = await firebaseAddDoc(roomsRef, newRoomData);
-                    setCurrentRoomId(docRef.id); // Guardar el ID del documento de Firebase
+                    setCurrentRoomId(docRef.id);
                     setIsHost(true);
-                    setCurrentMode('multiplayerLobby');
+                    setCurrentMode('multiplayerRoom'); // Cambiar al nuevo modo de sala
                     displayMessageBox(`Sala '${roomNameInput}' creada exitosamente. Esperando al Jugador 2...`);
                 } catch (e) {
                     console.error("Error al crear sala:", e);
@@ -454,7 +451,7 @@
                 try {
                     const roomsRef = firebaseCollection(dbRef.current, `artifacts/${appId.current}/public/data/rooms`);
                     const q = firebaseQuery(roomsRef, firebaseWhere("roomId", "==", roomNameInput));
-                    const querySnapshot = await firebaseGetDocs(q); // Usar firebaseGetDocs
+                    const querySnapshot = await firebaseGetDocs(q);
 
                     if (querySnapshot.empty) {
                         displayMessageBox("La sala no existe.");
@@ -471,8 +468,8 @@
                     if (data.player1.id === userId || data.player2.id === userId) {
                          displayMessageBox("Ya estás en esta sala.");
                          setCurrentRoomId(roomDoc.id);
-                         setIsHost(data.hostId === userId); // Establecer isHost correctamente
-                         setCurrentMode('multiplayerLobby');
+                         setIsHost(data.hostId === userId);
+                         setCurrentMode('multiplayerRoom'); // Cambiar al nuevo modo de sala
                          return;
                     }
                     if (data.player2.id !== null) {
@@ -480,7 +477,6 @@
                         return;
                     }
 
-                    // Unirse a la sala como Jugador 2
                     await firebaseUpdateDoc(roomDoc.ref, {
                         player2: {
                             id: userId,
@@ -491,9 +487,9 @@
                         },
                         lastUpdated: firebaseServerTimestamp()
                     });
-                    setCurrentRoomId(roomDoc.id); // Guardar el ID del documento
-                    setIsHost(false); // No es el host
-                    setCurrentMode('multiplayerLobby');
+                    setCurrentRoomId(roomDoc.id);
+                    setIsHost(false);
+                    setCurrentMode('multiplayerRoom'); // Cambiar al nuevo modo de sala
                     displayMessageBox(`Te has unido a la sala '${roomNameInput}' exitosamente.`);
                 } catch (e) {
                     console.error("Error al unirse a sala:", e);
@@ -538,18 +534,17 @@
                         countdownValue: 3,
                         player1: { ...roomData.player1, reactionTime: 0, falseStart: false },
                         player2: { ...roomData.player2, reactionTime: 0, falseStart: false },
-                        currentRoundStartTime: null, // Reiniciar para la nueva ronda
+                        currentRoundStartTime: null,
                         winnerName: null,
                         lastUpdated: firebaseServerTimestamp()
                     });
-                    // La UI se actualizará automáticamente a través del listener de roomData
+                    // El listener de roomData ahora manejará la transición a 'multiplayerGame'
                 } catch (e) {
                     console.error("Error al iniciar juego multiplayer:", e);
                     displayMessageBox("Error al iniciar el juego: " + e.message);
                 }
             };
 
-            // Lógica de cuenta atrás y "Go Green" para multijugador (solo el host la actualiza en Firebase)
             React.useEffect(() => {
                 if (!isHost || currentMode !== 'multiplayerGame' || !roomData) return;
 
@@ -563,7 +558,6 @@
                         });
                     }, 1000);
                 } else if (roomData.status === 'countdown' && roomData.countdownValue === 0) {
-                    // Transición a wait (Prepárate)
                      setTimeout(async () => {
                          await firebaseUpdateDoc(roomDocRef, {
                              status: 'wait',
@@ -575,45 +569,39 @@
                     greenLightTimeoutRef.current = setTimeout(async () => {
                         await firebaseUpdateDoc(roomDocRef, {
                             status: 'green',
-                            currentRoundStartTime: firebaseServerTimestamp(), // Capturar el tiempo del servidor
+                            currentRoundStartTime: firebaseServerTimestamp(),
                             lastUpdated: firebaseServerTimestamp()
                         });
                     }, randomDelay);
                 } else if (roomData.status === 'green') {
-                    // Si ambos han reaccionado o ha pasado el tiempo máximo, el host calcula el resultado
                     if ((roomData.player1.reactionTime > 0 || roomData.player1.falseStart) &&
                         (roomData.player2.reactionTime > 0 || roomData.player2.falseStart)
                     ) {
                         determineMultiplayerResults();
                     } else if (multiplayerRoundEndTimeoutRef.current === null) {
-                        // Iniciar timeout de fin de ronda si no está activo (para cuando nadie reaccione)
                         multiplayerRoundEndTimeoutRef.current = setTimeout(async () => {
-                            await firebaseUpdateDoc(roomDocRef, { status: 'result' }); // Forzar el estado a resultado
-                            determineMultiplayerResults(); // Forzar cálculo de resultados
-                        }, 2500); // Dar 2.5 segundos de gracia después de la luz verde
+                            await firebaseUpdateDoc(roomDocRef, { status: 'result' });
+                            determineMultiplayerResults();
+                        }, 2500);
                     }
                 }
-                return () => clearAllTimeouts(); // Limpiar timeouts si el efecto se re-ejecuta
-            }, [roomData, isHost, currentMode]);
-
+                return () => clearAllTimeouts();
+            }, [roomData, isHost, currentMode, currentRoomId, dbRef, appId]); // Añadidos currentRoomId, dbRef, appId a dependencias
 
             const recordMultiplayerReaction = async (playerNum) => {
                 if (currentMode !== 'multiplayerGame' || !isAuthReady || !dbRef.current || !currentRoomId || !roomData) return;
 
                 const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
                 const playerPath = `player${playerNum}`;
-                const currentPlayerId = playerNum === 1 ? roomData.player1.id : roomData.player2.id;
                 const localPlayerRef = playerNum === 1 ? roomData.player1 : roomData.player2;
 
                 if (localPlayerRef.id !== userId) {
-                    // Asegurar que solo el jugador correcto actualice su propio estado
                     console.warn("Intento de actualizar reacción de un jugador que no eres tú.");
                     return;
                 }
 
                 if (roomData.status === 'green' && localPlayerRef.reactionTime === 0 && !localPlayerRef.falseStart) {
                     const endTime = performance.now();
-                    // Calcular tiempo basado en el startTime sincronizado
                     const timeTaken = Math.round(endTime - startTime); 
                     
                     await firebaseUpdateDoc(roomDocRef, {
@@ -622,48 +610,39 @@
                     });
                     console.log(`Reacción de ${localPlayerRef.name} registrada: ${timeTaken} ms`);
 
-                    // Si ambos jugadores han reaccionado, el host debe calcular el resultado
-                    // Esto lo manejará el useEffect que escucha roomData y el host
-                    if (isHost && ((roomData.player1.reactionTime > 0 || roomData.player1.falseStart) && (roomData.player2.reactionTime > 0 || roomData.player2.falseStart))) {
-                         determineMultiplayerResults();
-                    }
-
                 } else if (roomData.status === 'wait' && !localPlayerRef.falseStart) {
-                    // Falso inicio
                     await firebaseUpdateDoc(roomDocRef, {
                         [`${playerPath}.falseStart`]: true,
                         lastUpdated: firebaseServerTimestamp()
                     });
                     displayMessageBox("¡Falso inicio! Tocaste demasiado pronto.");
                     console.log(`Falso inicio de ${localPlayerRef.name}`);
-                    // Si ambos jugadores han reaccionado (uno con falso inicio), el host debe calcular el resultado
-                    if (isHost && ((roomData.player1.reactionTime > 0 || roomData.player1.falseStart) && (roomData.player2.reactionTime > 0 || roomData.player2.falseStart))) {
-                         determineMultiplayerResults();
-                    }
                 }
             };
 
             const determineMultiplayerResults = async () => {
-                if (!isHost || !roomData || roomData.status !== 'result' && roomData.status !== 'green') return; // Solo el host y en el estado correcto
+                // Asegúrate de que solo el host calcule y actualice esto, y que el estado ya sea 'result' o 'green'
+                if (!isHost || !roomData || (roomData.status !== 'result' && roomData.status !== 'green')) return;
 
-                let p1 = roomData.player1;
-                let p2 = roomData.player2;
+                let p1 = { ...roomData.player1 }; // Copias para evitar mutación directa del estado de roomData
+                let p2 = { ...roomData.player2 };
                 let winnerName = null;
 
-                // Restablecer los estados de winner/loser para la UI
-                // Estos se calcularán localmente para la visualización del resultado
+                // Si aún no han reaccionado y el estado es 'green', asumimos que no reaccionaron a tiempo
+                if (p1.reactionTime === 0 && !p1.falseStart && roomData.status === 'green') p1.reactionTime = 9999;
+                if (p2.reactionTime === 0 && !p2.falseStart && roomData.status === 'green') p2.reactionTime = 9999;
+
 
                 if (p1.falseStart && p2.falseStart) {
                     winnerName = "Empate (Falsos inicios)";
                 } else if (p1.falseStart) {
                     winnerName = `${p2.name} gana (Falso inicio de ${p1.name})`;
-                    if (p2.reactionTime === 0) p2.reactionTime = 9999; // Si P2 no reaccionó antes del false start
+                    if (p2.reactionTime === 0) p2.reactionTime = 9999;
                 } else if (p2.falseStart) {
                     winnerName = `${p1.name} gana (Falso inicio de ${p2.name})`;
-                    if (p1.reactionTime === 0) p1.reactionTime = 9999; // Si P1 no reaccionó antes del false start
+                    if (p1.reactionTime === 0) p1.reactionTime = 9999;
                 } else {
-                    // Ambos reaccionaron válidamente o uno no reaccionó
-                    if (p1.reactionTime > 0 && p2.reactionTime > 0) {
+                    if (p1.reactionTime > 0 && p2.reactionTime > 0 && p1.reactionTime !== 9999 && p2.reactionTime !== 9999) {
                         if (p1.reactionTime < p2.reactionTime) {
                             winnerName = `${p1.name} gana (${p1.reactionTime} ms)`;
                         } else if (p2.reactionTime < p1.reactionTime) {
@@ -671,12 +650,12 @@
                         } else {
                             winnerName = "Empate (mismo tiempo)";
                         }
-                    } else if (p1.reactionTime > 0) {
+                    } else if (p1.reactionTime > 0 && p1.reactionTime !== 9999) {
                         winnerName = `${p1.name} gana (Jugador 2 no reaccionó)`;
-                        p2.reactionTime = 9999; // Marcar como no reaccionó
-                    } else if (p2.reactionTime > 0) {
+                        p2.reactionTime = 9999;
+                    } else if (p2.reactionTime > 0 && p2.reactionTime !== 9999) {
                         winnerName = `${p2.name} gana (Jugador 1 no reaccionó)`;
-                        p1.reactionTime = 9999; // Marcar como no reaccionó
+                        p1.reactionTime = 9999;
                     } else {
                         winnerName = "Nadie reaccionó a tiempo";
                         p1.reactionTime = 9999;
@@ -688,8 +667,8 @@
                     await firebaseUpdateDoc(firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`), {
                         status: 'result',
                         winnerName: winnerName,
-                        'player1.reactionTime': p1.reactionTime, // Asegurar que los 9999 se reflejen
-                        'player2.reactionTime': p2.reactionTime, // Asegurar que los 9999 se reflejen
+                        'player1.reactionTime': p1.reactionTime,
+                        'player2.reactionTime': p2.reactionTime,
                         lastUpdated: firebaseServerTimestamp()
                     });
                     console.log("Multiplayer: Resultados de ronda actualizados en Firestore.");
@@ -730,13 +709,10 @@
                 const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
                 try {
                     if (isHost) {
-                        // Si eres el host, elimina la sala
-                        // Usar deleteDoc en lugar de doc(...).delete() para claridad y consistencia
                         await firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`).delete(); 
                         console.log("Multiplayer: Sala eliminada por el host.");
                         displayMessageBox("Has cerrado la sala.");
                     } else {
-                        // Si eres el segundo jugador, desocupa tu slot
                         await firebaseUpdateDoc(roomDocRef, {
                             player2: { id: null, name: null, ready: false, reactionTime: 0, falseStart: false },
                             lastUpdated: firebaseServerTimestamp()
@@ -751,8 +727,8 @@
                     setCurrentRoomId(null);
                     setRoomData(null);
                     setIsHost(false);
-                    setCurrentMode('menu');
-                    clearAllTimeouts(); // Limpiar cualquier timeout restante
+                    setCurrentMode('menu'); // Vuelve al menú principal después de salir
+                    clearAllTimeouts();
                 }
             };
 
@@ -764,7 +740,8 @@
                 const handleKeyDown = (event) => {
                     if (event.code === 'Space') {
                         event.preventDefault();
-                        if (currentMode === 'individual' || currentMode === 'multiplayer') {
+                        // Solo para modos individuales/locales
+                        if (currentMode === 'individual' || currentMode === 'multiplayer') { 
                             if (gameState === 'idle') {
                                 handleStartIndividualGame(currentMode);
                             } else if (gameState === 'green' || gameState === 'wait') {
@@ -773,14 +750,13 @@
                                 resetIndividualGame();
                             }
                         }
+                        // En multiplayer online, los clics en la pantalla o botones manejan la reacción
                     }
-                    // Para multiplayer, los clics son en la pantalla dividida (touch) o los botones
-                    // No hay una tecla única para reaccionar para ambos jugadores en multiplayer remoto.
                 };
 
                 window.addEventListener('keydown', handleKeyDown);
                 return () => window.removeEventListener('keydown', handleKeyDown);
-            }, [gameState, userName, currentMode, reactionTime]);
+            }, [gameState, userName, currentMode, reactionTime, userId, isHost, roomData]); // Añadidos roomData, userId, isHost a dependencias para recordMultiplayerReaction
 
             // --------------------------------------------------
             // Helper for Background Color
@@ -796,7 +772,7 @@
                         case 'result':
                             return 'bg-blue-600';
                         default:
-                            return 'bg-gray-800'; // Lobby color
+                            return 'bg-gray-800'; // Lobby color (should transition away from lobby before game starts)
                     }
                 } else if (currentMode === 'individual' || currentMode === 'multiplayer') {
                     switch (gameState) {
@@ -810,10 +786,10 @@
                         case 'saving':
                             return 'bg-blue-600';
                         default:
-                            return 'bg-gray-800'; // Should not happen
+                            return 'bg-gray-800';
                     }
                 }
-                return 'bg-gray-800'; // Default for menu/multiplayer lobby
+                return 'bg-gray-800'; // Default for menu/multiplayer lobby/room
             };
 
             // --------------------------------------------------
@@ -862,17 +838,15 @@
                         </div>
                     )}
 
-                    {/* Individual / Local Multiplayer Game Screen */}
-                    {(currentMode === 'individual' || currentMode === 'multiplayer') && (
+                    {/* Individual Game Screen */}
+                    {currentMode === 'individual' && (
                         <div
                             className="relative flex flex-col items-center justify-center w-full max-w-4xl h-[70vh] rounded-xl shadow-2xl p-6 cursor-pointer"
                             onClick={recordIndividualReaction}
                         >
                             {gameState === 'idle' && (
                                 <div className="flex flex-col items-center space-y-6">
-                                    <h2 className="text-4xl font-extrabold mb-4 text-center">
-                                        {currentMode === 'individual' ? 'Duelo Individual' : 'Duelo Local (Multijugador)'}
-                                    </h2>
+                                    <h2 className="text-4xl font-extrabold mb-4 text-center">Duelo Individual</h2>
                                     <p className="text-xl text-center">¡Haz clic o pulsa la barra espaciadora para empezar!</p>
                                     <input
                                         type="text"
@@ -894,12 +868,11 @@
                                     >
                                         Volver al Menú
                                     </button>
-                                    {localGameHistory.filter(item => item.mode === 'individual' || item.mode === 'multiplayer').length > 0 && (
+                                    {localGameHistory.filter(item => item.mode === 'individual').length > 0 && (
                                         <div className="w-full max-w-xs mt-8 p-4 bg-gray-800 bg-opacity-75 rounded-xl shadow-inner border border-gray-700">
                                             <h3 className="text-2xl font-bold text-center mb-4 text-yellow-400">Historial (Últimas 5)</h3>
                                             <ol className="list-decimal list-inside text-base text-gray-200">
-                                                {/* Inverted history order (most recent first) */}
-                                                {localGameHistory.filter(item => item.mode === 'individual' || item.mode === 'multiplayer').reverse().map((entry, idx) => (
+                                                {localGameHistory.filter(item => item.mode === 'individual').reverse().map((entry, idx) => (
                                                     <li key={idx} className={`flex justify-between items-center py-1 px-2 rounded-md ${idx % 2 === 0 ? 'bg-gray-700' : 'bg-gray-600'}`}>
                                                         <span className="font-semibold text-white">{entry.name}</span>
                                                         <span className="text-green-300">{entry.reactionTime} ms</span>
@@ -946,12 +919,11 @@
                                     >
                                         Volver al Menú
                                     </button>
-                                    {localGameHistory.filter(item => item.mode === 'individual' || item.mode === 'multiplayer').length > 0 && (
+                                    {localGameHistory.filter(item => item.mode === 'individual').length > 0 && (
                                         <div className="w-full max-w-xs mt-8 p-4 bg-gray-800 bg-opacity-75 rounded-xl shadow-inner border border-gray-700">
                                             <h3 className="text-2xl font-bold text-center mb-4 text-yellow-400">Historial (Últimas 5)</h3>
                                             <ol className="list-decimal list-inside text-base text-gray-200">
-                                                {/* Inverted history order (most recent first) */}
-                                                {localGameHistory.filter(item => item.mode === 'individual' || item.mode === 'multiplayer').reverse().map((entry, idx) => (
+                                                {localGameHistory.filter(item => item.mode === 'individual').reverse().map((entry, idx) => (
                                                     <li key={idx} className={`flex justify-between items-center py-1 px-2 rounded-md ${idx % 2 === 0 ? 'bg-gray-700' : 'bg-gray-600'}`}>
                                                         <span className="font-semibold text-white">{entry.name}</span>
                                                         <span className="text-green-300">{entry.reactionTime} ms</span>
@@ -965,7 +937,7 @@
                         </div>
                     )}
 
-                    {/* Multiplayer Lobby (Create/Join Room) */}
+                    {/* Multiplayer Lobby (Create/Join Room) - Input screen */}
                     {currentMode === 'multiplayerLobby' && (
                         <div className="flex flex-col items-center space-y-6 p-8 bg-gray-800 bg-opacity-90 rounded-xl shadow-2xl w-full max-w-md">
                             <h2 className="text-4xl font-extrabold mb-4 text-center text-yellow-400">Modo Multijugador Online</h2>
@@ -1019,59 +991,60 @@
                             >
                                 Volver al Menú
                             </button>
+                        </div>
+                    )}
 
-                            {/* Lobby view once a room is joined/created */}
-                            {currentRoomId && roomData && (
-                                <div className="w-full mt-8 p-6 bg-gray-700 rounded-xl shadow-inner border border-gray-600">
-                                    <h3 className="text-3xl font-bold text-center text-yellow-300 mb-4">Sala: {roomData.roomId}</h3>
-                                    <p className="text-lg text-center mb-4">Estado: {
-                                        roomData.status === 'waiting' ? 'Esperando jugadores...' :
-                                        roomData.status === 'countdown' ? `Iniciando: ${roomData.countdownValue}` :
-                                        roomData.status === 'playing' ? 'En juego' :
-                                        roomData.status === 'result' ? 'Resultados' :
-                                        'Desconocido'
-                                    }</p>
-                                    <div className="flex justify-around items-center text-xl font-semibold mb-6">
-                                        <div className="text-center">
-                                            <p className="text-blue-300">{roomData.player1.name || "Esperando..."}</p>
-                                            <p className={`${roomData.player1.ready ? 'text-green-400' : 'text-red-400'}`}>
-                                                {roomData.player1.ready ? 'LISTO' : 'NO LISTO'}
-                                            </p>
-                                        </div>
-                                        <div className="text-center">
-                                            <p className="text-blue-300">{roomData.player2.name || "Esperando..."}</p>
-                                            <p className={`${roomData.player2.ready ? 'text-green-400' : 'text-red-400'}`}>
-                                                {roomData.player2.ready ? 'LISTO' : 'NO LISTO'}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <div className="flex flex-col space-y-4">
-                                        <button
-                                            onClick={toggleReadyStatus}
-                                            disabled={roomData.player1.id !== userId && roomData.player2.id !== userId}
-                                            className="w-full bg-orange-500 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
-                                        >
-                                            {roomData.player1.id === userId && roomData.player1.ready ? 'Deshacer Listo' :
-                                            roomData.player2.id === userId && roomData.player2.ready ? 'Deshacer Listo' : 'Listo'}
-                                        </button>
-                                        {isHost && (
-                                            <button
-                                                onClick={startGameMultiplayer}
-                                                disabled={!roomData.player1.ready || !roomData.player2.ready || roomData.status !== 'waiting'}
-                                                className="w-full bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
-                                            >
-                                                Empezar Duelo
-                                            </button>
-                                        )}
-                                        <button
-                                            onClick={leaveRoom}
-                                            className="w-full bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full text-lg transition duration-300 transform hover:scale-105 shadow-lg"
-                                        >
-                                            {isHost ? 'Cerrar Sala' : 'Salir de Sala'}
-                                        </button>
-                                    </div>
+                    {/* Multiplayer Room (Lobby after joining/creating) */}
+                    {currentMode === 'multiplayerRoom' && currentRoomId && roomData && (
+                         <div className="w-full max-w-md mt-8 p-6 bg-gray-700 rounded-xl shadow-2xl border border-gray-600 flex flex-col items-center space-y-6">
+                            <h3 className="text-3xl font-bold text-center text-yellow-300 mb-4">Sala: {roomData.roomId}</h3>
+                            <p className="text-xl text-center mb-6">Tu ID de usuario: <span className="font-bold text-green-300 break-all">{userId || "Cargando..."}</span></p>
+
+                            <p className="text-lg text-center mb-4">Estado: {
+                                roomData.status === 'waiting' ? 'Esperando jugadores...' :
+                                roomData.status === 'countdown' ? `Iniciando: ${roomData.countdownValue}` :
+                                roomData.status === 'playing' ? 'En juego' :
+                                roomData.status === 'result' ? 'Resultados' :
+                                'Desconocido'
+                            }</p>
+                            <div className="flex justify-around items-center text-xl font-semibold w-full mb-6">
+                                <div className="text-center">
+                                    <p className="text-blue-300">{roomData.player1.name || "Esperando..."}</p>
+                                    <p className={`${roomData.player1.ready ? 'text-green-400' : 'text-red-400'}`}>
+                                        {roomData.player1.ready ? 'LISTO' : 'NO LISTO'}
+                                    </p>
                                 </div>
-                            )}
+                                <div className="text-center">
+                                    <p className="text-blue-300">{roomData.player2.name || "Esperando..."}</p>
+                                    <p className={`${roomData.player2.ready ? 'text-green-400' : 'text-red-400'}`}>
+                                        {roomData.player2.ready ? 'LISTO' : 'NO LISTO'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex flex-col space-y-4 w-full">
+                                <button
+                                    onClick={toggleReadyStatus}
+                                    disabled={roomData.player1.id !== userId && roomData.player2.id !== userId}
+                                    className="w-full bg-orange-500 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                >
+                                    {(roomData.player1.id === userId && roomData.player1.ready) || (roomData.player2.id === userId && roomData.player2.ready) ? 'Deshacer Listo' : 'Listo'}
+                                </button>
+                                {isHost && (
+                                    <button
+                                        onClick={startGameMultiplayer}
+                                        disabled={!roomData.player1.ready || !roomData.player2.ready || roomData.status !== 'waiting'}
+                                        className="w-full bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                    >
+                                        Empezar Duelo
+                                    </button>
+                                )}
+                                <button
+                                    onClick={leaveRoom}
+                                    className="w-full bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full text-lg transition duration-300 transform hover:scale-105 shadow-lg"
+                                >
+                                    {isHost ? 'Cerrar Sala' : 'Salir de Sala'}
+                                </button>
+                            </div>
                         </div>
                     )}
 
