@@ -1,0 +1,1513 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gunchoicer - El Duelo Multijugador</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts - Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">\
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden; /* Prevent scrolling, especially on mobile */
+        }
+        /* Custom styles for reaction areas if needed, though Tailwind mostly covers it */
+        .rotate-180 {
+            transform: rotate(180deg);
+        }
+    </style>
+    <!-- React & ReactDOM CDNs -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Firebase CDNs (Reintroduced for Multiplayer) -->
+    <script type="module">
+        // Importaciones de Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
+        // Asegurarse de importar deleteDoc junto con las demás funciones de Firestore
+        import { getFirestore, collection, addDoc, onSnapshot, doc, getDoc, updateDoc, query, where, serverTimestamp, getDocs, deleteDoc, orderBy, limit } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+        import { Timestamp as FirebaseTimestamp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+
+
+        // =========================================================================================
+        // ¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡ IMPORTANTE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // =========================================================================================
+        // DEBES REEMPLAZAR ESTOS VALORES CON LOS DE TU PROYECTO FIREBASE.
+        // Si no tienes uno, crea un proyecto en console.firebase.google.com
+        // HABILITA la Autenticación Anónima en Firebase -> Build -> Authentication -> Sign-in method.
+        // CONFIGURA las Reglas de Seguridad de Firestore (Build -> Firestore Database -> Rules)
+        // con las siguientes reglas (COPIAR Y PEGAR):
+        /*
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /artifacts/{appId}/public/data/rooms/{roomId} {
+              allow read: if true; // Cualquier persona puede leer las salas (para unirse)
+              allow create: if request.auth != null; // Solo usuarios autenticados pueden crear
+              // Regla de actualización: Permite al host actualizar CUALQUIER COSA,
+              // y a cualquier jugador (player1 o player2) actualizar sus propios datos o unirse a la sala.
+              allow update: if request.auth != null && (
+                resource.data.hostId == request.auth.uid || // El host siempre puede actualizar
+                request.resource.data.player1.id == request.auth.uid || // El jugador 1 puede actualizar su estado
+                request.resource.data.player2.id == request.auth.uid    // El jugador 2 puede actualizar su estado (incluyendo unirse por primera vez)
+              );
+              // La regla de borrado sigue siendo la misma: solo los jugadores establecidos pueden borrar
+              allow delete: if request.auth != null && (resource.data.player1.id == request.auth.uid || resource.data.player2.id == request.auth.uid);
+            }
+            // Reglas para la colección de scores (Marcadores Globales)
+            match /artifacts/{appId}/public/data/gunchoicer_scores/{scoreId} {
+              allow read: if true; // Cualquier persona puede leer los marcadores
+              allow write: if request.auth != null; // Solo usuarios autenticados pueden escribir (añadir nuevas puntuaciones)
+            }
+          }
+        }
+        */
+        // =========================================================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAF06nJHV5zYb4W-vUrrn8MJ1Ft_5CjV_s",
+            authDomain: "gunchoicer-21f0f.firebaseapp.com",
+            projectId: "gunchoicer-21f0f",
+            storageBucket: "gunchoicer-21f0f.firebasestorage.app",
+            messagingSenderId: "244865223861",
+            appId: "1:244865223861:web:7ab86ba9bece24f70d02fc",
+            measurementId: "G-JNWD47M3GV"
+        };
+
+        console.log("Firebase: Iniciando inicialización de la aplicación.");
+        try {
+            const app = initializeApp(firebaseConfig);
+            window.db = getFirestore(app);
+            window.auth = getAuth(app);
+            console.log("Firebase: App, DB y Auth inicializados.");
+
+            onAuthStateChanged(window.auth, (user) => {
+                if (!user) {
+                    console.log("Firebase Auth: No hay usuario autenticado. Intentando inicio de sesión anónimo.");
+                    signInAnonymously(window.auth)
+                        .then(() => {
+                            console.log("Firebase Auth: Inicio de sesión anónimo exitoso. User ID:", window.auth.currentUser?.uid);
+                            window.userId = window.auth.currentUser?.uid || crypto.randomUUID();
+                            window.isAuthReady = true;
+                            console.log("Firebase Auth: Estado de autenticación REALMENTE LISTO. ID de Usuario:", window.userId);
+                        })
+                        .catch((error) => {
+                            console.error("Firebase Auth: Error al iniciar sesión anónimamente:", error);
+                            window.userId = crypto.randomUUID(); // Fallback
+                            window.isAuthReady = false; // Mark as NOT ready if authentication fails
+                            console.warn("Firebase Auth: Continuará el juego sin funcionalidades online debido a errores de autenticación.");
+                        });
+                } else {
+                    window.userId = user.uid;
+                    window.isAuthReady = true;
+                    console.log("Firebase Auth: Usuario ya autenticado. ID de Usuario:", window.userId);
+                }
+            });
+
+            // Make Firebase functions global for the React component
+            window.firebaseApp = app;
+            window.firebaseAuth = getAuth;
+            window.firebaseSignInAnonymously = signInAnonymously;
+            window.firebaseOnAuthStateChanged = onAuthStateChanged;
+            window.firebaseFirestore = getFirestore;
+            window.firebaseCollection = collection;
+            window.firebaseAddDoc = addDoc;
+            window.firebaseOnSnapshot = onSnapshot;
+            window.firebaseDoc = doc; // Added to access specific documents
+            window.firebaseGetDoc = getDoc; // Added to get documents
+            window.firebaseUpdateDoc = updateDoc; // Added to update documents
+            window.firebaseQuery = query;
+            window.firebaseWhere = where; // Added for queries
+            window.firebaseServerTimestamp = serverTimestamp;
+            window.firebaseGetDocs = getDocs;
+            window.firebaseDeleteDoc = deleteDoc;
+            window.firebaseOrderBy = orderBy; // Added for ordering query results
+            window.firebaseLimit = limit; // Added for limiting query results
+            window.firebaseTimestamp = FirebaseTimestamp; // Added for explicit Timestamp object
+
+            // Define a consistent global appId
+            window.__app_id = 'gunchoicer-multiplayer-app'; // New app ID for multiplayer
+        } catch (e) {
+            console.error("Firebase: Fatal error during initialization:", e);
+            window.isAuthReady = false; // Mark as not ready if there's a critical error
+            window.userId = crypto.randomUUID(); // Fallback for local ID
+            console.warn("Firebase: The application will not be able to use online features.");
+        }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Access global Firebase instances and functions
+        const {
+            firebaseApp, firebaseAuth, firebaseSignInAnonymously, firebaseOnAuthStateChanged,
+            firebaseFirestore, firebaseCollection, firebaseAddDoc, firebaseOnSnapshot,
+            firebaseDoc, firebaseGetDoc, firebaseUpdateDoc, firebaseQuery, firebaseWhere, firebaseServerTimestamp,
+            firebaseGetDocs, firebaseDeleteDoc, firebaseOrderBy, firebaseLimit, firebaseTimestamp
+        } = window;
+
+        const App = () => {
+            const [currentMode, setCurrentMode] = React.useState('menu'); 
+            const [gameState, setGameState] = React.useState('idle'); 
+            const [countdownValue, setCountdownValue] = React.useState(3);
+            // Renamed for clarity: gameStartServerTimeMs is the server timestamp
+            const [gameStartServerTimeMs, setGameStartServerTimeMs] = React.useState(0);
+            const [userName, setUserName] = React.useState('');
+            const [reactionTime, setReactionTime] = React.useState(0); 
+            const [localGameHistory, setLocalGameHistory] = React.useState([]);
+            const [message, setMessage] = React.useState('');
+            const [isMessageBoxVisible, setIsMessageBoxVisible] = React.useState(false);
+            const [showUserId, setShowUserId] = React.useState(false); // State to show/hide ID
+
+            // Firebase States
+            const [isAuthReady, setIsAuthReady] = React.useState(false);
+            const [userId, setUserId] = React.useState(null);
+            const dbRef = React.useRef(null);
+            const appId = React.useRef(window.__app_id || 'default-app-id');
+            const [globalScores, setGlobalScores] = React.useState([]); // State for global leaderboards
+            const [dailyScores, setDailyScores] = React.useState([]); // State for daily leaderboards
+            const [showDailyScores, setShowDailyScores] = React.useState(false); // Toggle for daily/global
+
+            // Multiplayer States
+            const [roomNameInput, setRoomNameInput] = React.useState('');
+            const [passwordInput, setPasswordInput] = React.useState('');
+            const [currentRoomId, setCurrentRoomId] = React.useState(null); 
+            const [roomData, setRoomData] = React.useState(null); 
+            const [isHost, setIsHost] = React.useState(false); 
+
+            // Refs for timeouts
+            const countdownTimeoutRef = React.useRef(null);
+            const greenLightTimeoutRef = React.useRef(null);
+            const multiplayerRoundEndTimeoutRef = React.useRef(null);
+
+            // --------------------------------------------------
+            // Firebase Initialization and Auth Listener (Improved for debugging)
+            // --------------------------------------------------
+            React.useEffect(() => {
+                const checkFirebaseReady = setInterval(() => {
+                    if (typeof window.isAuthReady !== 'undefined' && window.isAuthReady !== null) { // Wait until isAuthReady has a defined value
+                        dbRef.current = window.db;
+                        setUserId(window.userId);
+                        setIsAuthReady(window.isAuthReady);
+                        clearInterval(checkFirebaseReady);
+                        console.log("React: Firebase global available and FINAL authentication status:", window.isAuthReady, "UserID:", window.userId);
+                    } else {
+                        console.log("React: Waiting for Firebase Auth and DB to be ready... Current isAuthReady status:", window.isAuthReady);
+                    }
+                }, 100);
+                return () => clearInterval(checkFirebaseReady);
+            }, []);
+
+            // --------------------------------------------------
+            // Firestore Room Listener for Multiplayer
+            // --------------------------------------------------
+            React.useEffect(() => {
+                if (!isAuthReady || !dbRef.current || !currentRoomId) {
+                    console.log("Multiplayer Listener: Skipping, Firebase not ready or no active room.");
+                    return;
+                }
+
+                console.log("Multiplayer Listener: Setting up listener for room:", currentRoomId);
+                const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
+
+                const unsubscribe = firebaseOnSnapshot(roomDocRef, async (docSnapshot) => { // Added async
+                    if (docSnapshot.exists()) {
+                        const data = docSnapshot.data();
+                        console.log("Multiplayer Listener: Room data updated:", data);
+                        setRoomData(data);
+
+                        // Room cleanup logic only for the host
+                        if (isHost && data.lastUpdated && data.createdAt) {
+                            const fiveMinutes = 5 * 60 * 1000;
+                            const tenMinutes = 10 * 60 * 1000;
+                            const now = Date.now();
+                            const lastUpdatedMs = data.lastUpdated.toMillis();
+                            const createdAtMs = data.createdAt.toMillis();
+
+                            if (now - lastUpdatedMs > fiveMinutes || now - createdAtMs > tenMinutes) {
+                                console.log(`Host: Deleting room ${currentRoomId} due to inactivity or age.`);
+                                await firebaseDeleteDoc(roomDocRef); // Attempt to delete the room
+                                return; // Exit after attempting to delete
+                            }
+                        }
+
+                        // If host is kicked or room is closed, go back to menu
+                        if (!data.player1.id && !data.player2.id) {
+                            console.log("Multiplayer Listener: Both players have left or the room has been deleted.");
+                            setCurrentRoomId(null);
+                            setRoomData(null);
+                            setIsHost(false);
+                            setCurrentMode('menu');
+                            displayMessageBox("The room you were connected to has been closed or no longer exists.");
+                            return;
+                        } else if (data.hostId === userId && !data.player1.id) { // If you are the host and no longer in player1
+                            console.log("Multiplayer Listener: The host has been kicked or their entry disappeared.");
+                             setCurrentRoomId(null);
+                             setRoomData(null);
+                             setIsHost(false);
+                             setCurrentMode('menu');
+                             displayMessageBox("You have been kicked from the room or the room has been closed.");
+                             return;
+                        }
+
+                        // Transition back to multiplayerRoom mode if host restarts the game (status changes to 'waiting')
+                        if (currentMode === 'multiplayerGame' && data.status === 'waiting') {
+                            console.log("Multiplayer Listener: Host has restarted the game, returning to waiting room.");
+                            setCurrentMode('multiplayerRoom');
+                            setGameState('idle'); // Reset game state for next round
+                            clearAllTimeouts(); // Clear any lingering game timeouts
+                            setGameStartServerTimeMs(0); // Reset server time base
+                        } 
+                        // Transition to game mode if room status is 'countdown'
+                        else if (currentMode === 'multiplayerRoom' && data.status === 'countdown') {
+                            setCurrentMode('multiplayerGame');
+                        }
+
+                        if (currentMode === 'multiplayerGame') {
+                            if (data.status && data.status !== gameState) {
+                                setGameState(data.status);
+                            }
+                            if (data.countdownValue !== undefined && data.countdownValue !== countdownValue) {
+                                setCountdownValue(data.countdownValue);
+                            }
+                            // Detect 'green' light start to measure time
+                            if (data.status === 'green' && data.currentRoundStartTime) {
+                                // Only set if not already set for this round
+                                if (gameStartServerTimeMs === 0) { 
+                                    setGameStartServerTimeMs(data.currentRoundStartTime.toMillis());
+                                    console.log(`Multiplayer: SHOOT! (Server time base: ${data.currentRoundStartTime.toMillis()})`);
+                                }
+                                
+                                // This timeout is a fallback to end the round if no one reacts
+                                // or if the first touch failed to change the status to 'result' for some reason.
+                                if (isHost && multiplayerRoundEndTimeoutRef.current === null) {
+                                    multiplayerRoundEndTimeoutRef.current = setTimeout(async () => {
+                                        // Get the latest data to check current status before forcing
+                                        const currentRoomData = (await firebaseGetDoc(roomDocRef)).data(); 
+                                        if (currentRoomData && currentRoomData.status === 'green') {
+                                            const p1DidntReact = currentRoomData.player1.reactionTime === 0 && !currentRoomData.player1.falseStart;
+                                            const p2DidntReact = currentRoomData.player2.reactionTime === 0 && !currentRoomData.player2.falseStart;
+
+                                            if (p1DidntReact || p2DidntReact) {
+                                                console.log("Multiplayer: Reaction time limit reached. Forcing result.");
+                                                await firebaseUpdateDoc(roomDocRef, { status: 'result', lastUpdated: firebaseServerTimestamp() });
+                                            }
+                                        }
+                                    }, 2500); 
+                                }
+                            } else { // If status is not 'green', reset gameStartServerTimeMs for the next round
+                                if (gameStartServerTimeMs !== 0) {
+                                    setGameStartServerTimeMs(0);
+                                }
+                            }
+                        }
+                    } else {
+                        console.log("Multiplayer Listener: Room no longer exists or was deleted by host.");
+                        setCurrentRoomId(null);
+                        setRoomData(null);
+                        setIsHost(false);
+                        setCurrentMode('menu'); // Return to menu if room disappears
+                        displayMessageBox("The room you were connected to has been closed or no longer exists.");
+                    }
+                }, (error) => {
+                    console.error("Multiplayer Listener: Error listening to room:", error);
+                    displayMessageBox("Connection error with the room: " + error.message);
+                });
+
+                return () => {
+                    console.log("Multiplayer Listener: Unsubscribing from room listener.");
+                    unsubscribe();
+                    clearAllTimeouts(); // Clear timeouts when leaving the room
+                    setGameStartServerTimeMs(0); // Ensure game time is reset
+                };
+            }, [isAuthReady, currentRoomId, currentMode, gameState, userId, isHost, gameStartServerTimeMs, countdownValue]); 
+
+            // --------------------------------------------------
+            // Firestore Global and Daily Scores Listeners
+            // --------------------------------------------------
+            React.useEffect(() => {
+                if (!isAuthReady || !dbRef.current) {
+                    console.log("Firestore not ready or user not authenticated. Skipping global/daily scores listener.");
+                    return;
+                }
+
+                const scoresCollectionRef = firebaseCollection(dbRef.current, `artifacts/${appId.current}/public/data/gunchoicer_scores`);
+                
+                // Listener for Global Scores (Top 5)
+                const globalQuery = firebaseQuery(
+                    scoresCollectionRef,
+                    firebaseOrderBy("reactionTime"),
+                    firebaseLimit(5)
+                );
+                const unsubscribeGlobal = firebaseOnSnapshot(globalQuery, (snapshot) => {
+                    const newScores = [];
+                    snapshot.forEach((doc) => {
+                        const data = doc.data();
+                        if (data.name && data.reactionTime !== undefined && data.timestamp && data.gameMode) {
+                            newScores.push({ id: doc.id, ...data });
+                        }
+                    });
+                    // Client-side sort by timestamp for ties if needed, though orderBy handles main sort
+                    newScores.sort((a, b) => {
+                        if (a.reactionTime === b.reactionTime) {
+                            return a.timestamp?.toMillis() - b.timestamp?.toMillis();
+                        }
+                        return a.reactionTime - b.reactionTime;
+                    });
+                    setGlobalScores(newScores);
+                    console.log("Global scores updated:", newScores.length, "scores");
+                }, (error) => {
+                    console.error("Error fetching global scores:", error);
+                    displayMessageBox("Error loading global leaderboards: " + error.message);
+                });
+
+                // Listener for Daily Scores (Top 5 for today)
+                const getTodayStartEndTimestamps = () => {
+                    const now = new Date();
+                    now.setUTCHours(0, 0, 0, 0); // Start of today in UTC
+                    const startOfToday = firebaseTimestamp.fromDate(now);
+
+                    const endOfToday = new Date(now);
+                    endOfToday.setUTCHours(23, 59, 59, 999); // End of today in UTC
+                    const endOfTodayTimestamp = firebaseTimestamp.fromDate(endOfToday);
+
+                    return { startOfToday, endOfTodayTimestamp };
+                };
+
+                const { startOfToday, endOfTodayTimestamp } = getTodayStartEndTimestamps();
+
+                // FIX: Removed orderBy("reactionTime") and limit(5) from Firestore query for daily scores
+                // Instead, fetch all daily scores within the range, and then sort/limit client-side.
+                const dailyQuery = firebaseQuery(
+                    scoresCollectionRef,
+                    firebaseWhere("timestamp", ">=", startOfToday),
+                    firebaseWhere("timestamp", "<=", endOfTodayTimestamp),
+                    firebaseOrderBy("timestamp") // Must order by timestamp when filtering by it
+                );
+                const unsubscribeDaily = firebaseOnSnapshot(dailyQuery, (snapshot) => {
+                    let newScores = [];
+                    snapshot.forEach((doc) => {
+                        const data = doc.data();
+                        if (data.name && data.reactionTime !== undefined && data.timestamp && data.gameMode) {
+                            newScores.push({ id: doc.id, ...data });
+                        }
+                    });
+                    // Client-side sort by reactionTime and then limit to 5
+                    newScores.sort((a, b) => {
+                        if (a.reactionTime === b.reactionTime) {
+                            return a.timestamp?.toMillis() - b.timestamp?.toMillis();
+                        }
+                        return a.reactionTime - b.reactionTime;
+                    });
+                    setDailyScores(newScores.slice(0, 5)); // Limit to top 5 after sorting
+                    console.log("Daily scores updated:", newScores.length, "scores before limit, ", newScores.slice(0, 5).length, "after limit");
+                }, (error) => {
+                    console.error("Error fetching daily scores:", error);
+                    displayMessageBox("Error loading daily leaderboards: " + error.message);
+                });
+
+                return () => {
+                    console.log("Unsubscribing from Firestore global and daily scores.");
+                    unsubscribeGlobal();
+                    unsubscribeDaily();
+                };
+            }, [isAuthReady, dbRef, appId]); // Dependencies to re-execute if auth or db change
+
+
+            // --------------------------------------------------
+            // Common Utility Functions
+            // --------------------------------------------------
+            const displayMessageBox = (msg) => {
+                setMessage(msg);
+                setIsMessageBoxVisible(true);
+            };
+
+            const closeMessageBox = () => {
+                setIsMessageBoxVisible(false);
+                setMessage('');
+            };
+
+            const clearAllTimeouts = () => {
+                if (countdownTimeoutRef.current) {
+                    clearTimeout(countdownTimeoutRef.current);
+                    countdownTimeoutRef.current = null;
+                }
+                if (greenLightTimeoutRef.current) {
+                    clearTimeout(greenLightTimeoutRef.current);
+                    greenLightTimeoutRef.current = null;
+                }
+                if (multiplayerRoundEndTimeoutRef.current) {
+                    clearTimeout(multiplayerRoundEndTimeoutRef.current);
+                    multiplayerRoundEndTimeoutRef.current = null;
+                }
+            };
+
+            React.useEffect(() => {
+                setGameState('idle');
+                setCountdownValue(3);
+                setReactionTime(0);
+                // startTime (now gameStartServerTimeMs) is handled by multiplayer listener
+                clearAllTimeouts();
+                if (currentMode === 'menu' || currentMode === 'individual' || currentMode === 'leaderboards') { 
+                    setCurrentRoomId(null);
+                    setRoomData(null);
+                    setIsHost(false);
+                    setRoomNameInput('');
+                    setPasswordInput('');
+                    setShowUserId(false); // Reset ID visibility when leaving multiplayer
+                }
+            }, [currentMode]);
+
+            // --------------------------------------------------
+            // Individual / Multiplayer Game Logic (for single-player type games)
+            // --------------------------------------------------
+            const handleStartIndividualGame = (mode) => {
+                if (!isAuthReady || !dbRef.current) {
+                    displayMessageBox("Firebase is not ready. Please wait a moment and ensure you have an internet connection.");
+                    return;
+                }
+                
+                if (mode === 'individual' && !userName.trim()) {
+                    displayMessageBox("No se guardará la puntuación en los marcadores globales si juegas de forma anónima.");
+                }
+
+                setCurrentMode(mode);
+                setGameState('countdown');
+                setCountdownValue(3);
+                setReactionTime(0);
+                setGameStartServerTimeMs(0); // Use this for individual mode as well for consistency
+                clearAllTimeouts();
+
+                countdownTimeoutRef.current = setTimeout(() => {
+                    setCountdownValue(2);
+                    countdownTimeoutRef.current = setTimeout(() => {
+                        setCountdownValue(1);
+                        countdownTimeoutRef.current = setTimeout(() => {
+                            startWaitPhaseIndividual();
+                        }, 1000);
+                    }, 1000);
+                }, 1000);
+            };
+
+            const startWaitPhaseIndividual = () => {
+                setGameState('wait');
+                const randomDelay = Math.random() * 4500 + 500;
+                greenLightTimeoutRef.current = setTimeout(() => {
+                    goGreenIndividual();
+                }, randomDelay);
+            };
+
+            const goGreenIndividual = () => {
+                setGameState('green');
+                // For individual mode, startTime is performance.now()
+                // For multiplayer, gameStartServerTimeMs is set from Firestore
+                setGameStartServerTimeMs(performance.now()); // Use gameStartServerTimeMs for consistency
+            };
+
+            const recordIndividualReaction = () => {
+                if (gameState === 'green') {
+                    const endTime = performance.now();
+                    const timeTaken = Math.round(endTime - gameStartServerTimeMs); // Use gameStartServerTimeMs
+                    setReactionTime(timeTaken);
+                    setGameState('result');
+                    const nameToSave = userName.trim() === '' ? 'Jugador Anónimo' : userName;
+                    saveScoreLocal(nameToSave, timeTaken, currentMode === 'individual' ? 'individual' : 'multiplayer');
+                    
+                    // Only save to global if a name is provided
+                    if (userName.trim() !== '') {
+                        saveScoreGlobal(nameToSave, timeTaken, currentMode === 'individual' ? 'individual' : 'multiplayer'); 
+                    } else {
+                        console.log("Playing anonymously, score will not be saved to global leaderboards.");
+                    }
+                } else if (gameState === 'wait') {
+                    setReactionTime(0);
+                    setGameState('result');
+                    displayMessageBox("¡Falso inicio! Tocaste demasiado pronto.");
+                    clearAllTimeouts();
+                }
+            };
+
+            const resetIndividualGame = () => {
+                clearAllTimeouts();
+                setGameState('idle');
+                setCountdownValue(3);
+                setReactionTime(0);
+                setGameStartServerTimeMs(0); // Reset for next round
+            };
+
+            // --------------------------------------------------
+            // Local Save Score Function (Firebase removed for this, only local history)
+            // --------------------------------------------------
+            const saveScoreLocal = (name, time, mode) => {
+                const newHistoryEntry = {
+                    round: localGameHistory.length + 1,
+                    name: name,
+                    reactionTime: time,
+                    mode: mode,
+                    timestamp: new Date()
+                };
+
+                setLocalGameHistory(prevHistory => {
+                    const updatedHistory = [...prevHistory, newHistoryEntry];
+                    return updatedHistory.slice(Math.max(0, updatedHistory.length - 5));
+                });
+                console.log(`Score of ${name} (${time} ms) in ${mode} mode saved locally.`);
+            };
+
+            // --------------------------------------------------
+            // Global Save Score Function (to Firestore)
+            // --------------------------------------------------
+            const saveScoreGlobal = async (name, time, mode) => {
+                if (!dbRef.current || !userId) {
+                    console.error("Firestore DB or userId not available for global score save.");
+                    return;
+                }
+                try {
+                    await firebaseAddDoc(firebaseCollection(dbRef.current, `artifacts/${appId.current}/public/data/gunchoicer_scores`), {
+                        name: name,
+                        reactionTime: time,
+                        timestamp: firebaseServerTimestamp(), // Use server timestamp for global consistency
+                        userId: userId,
+                        gameMode: mode // Store the game mode
+                    });
+                    console.log(`Global score of ${name} (${time} ms) in ${mode} mode saved.`);
+                } catch (e) {
+                    console.error("Error adding global score document: ", e);
+                    displayMessageBox("Error saving global score: " + e.message);
+                }
+            };
+
+
+            // --------------------------------------------------
+            // Multiplayer Specific Functions
+            // --------------------------------------------------
+
+            const createRoom = async () => {
+                if (!isAuthReady || !dbRef.current || !userId) {
+                    displayMessageBox("Firebase is not ready. Please wait and ensure you have an internet connection.");
+                    return;
+                }
+                if (!roomNameInput.trim() || !passwordInput.trim() || !userName.trim()) {
+                    displayMessageBox("Please enter your name, room name and a password.");
+                    return;
+                }
+
+                try {
+                    const roomsRef = firebaseCollection(dbRef.current, `artifacts/${appId.current}/public/data/rooms`);
+                    const q = firebaseQuery(roomsRef, firebaseWhere("roomId", "==", roomNameInput));
+                    const querySnapshot = await firebaseGetDocs(q);
+
+                    if (!querySnapshot.empty) {
+                        displayMessageBox("A room with that name already exists. Please choose another.");
+                        return;
+                    }
+
+                    const newRoomData = {
+                        roomId: roomNameInput,
+                        password: passwordInput,
+                        status: 'waiting',
+                        hostId: userId,
+                        player1: {
+                            id: userId,
+                            name: userName,
+                            ready: false,
+                            reactionTime: 0,
+                            falseStart: false
+                        },
+                        player2: {
+                            id: null,
+                            name: null,
+                            ready: false,
+                            reactionTime: 0,
+                            falseStart: false
+                        },
+                        currentRoundStartTime: null,
+                        winnerName: null, 
+                        lastUpdated: firebaseServerTimestamp(), // Updated for activity tracking
+                        createdAt: firebaseServerTimestamp() // New: track creation time
+                    };
+                    const docRef = await firebaseAddDoc(roomsRef, newRoomData);
+                    setCurrentRoomId(docRef.id);
+                    setIsHost(true);
+                    setRoomData(newRoomData); 
+                    setCurrentMode('multiplayerRoom'); 
+                } catch (e) {
+                    console.error("Error creating room:", e);
+                    displayMessageBox("Error creating room: " + e.message);
+                }
+            };
+
+            const joinRoom = async () => {
+                if (!isAuthReady || !dbRef.current || !userId) {
+                    displayMessageBox("Firebase is not ready. Please wait and ensure you have an internet connection.");
+                    return;
+                }
+                if (!roomNameInput.trim() || !passwordInput.trim() || !userName.trim()) {
+                    displayMessageBox("Please enter your name, room name and password.");
+                    return;
+                }
+
+                try {
+                    const roomsRef = firebaseCollection(dbRef.current, `artifacts/${appId.current}/public/data/rooms`);
+                    const q = firebaseQuery(roomsRef, firebaseWhere("roomId", "==", roomNameInput));
+                    const querySnapshot = await firebaseGetDocs(q);
+
+                    if (querySnapshot.empty) {
+                        displayMessageBox("The room does not exist.");
+                        return;
+                    }
+
+                    const roomDoc = querySnapshot.docs[0];
+                    const data = roomDoc.data();
+
+                    if (data.password !== passwordInput) {
+                        displayMessageBox("Incorrect password.");
+                        return;
+                    }
+                    if (data.player1.id === userId || data.player2.id === userId) {
+                         displayMessageBox("You are already in this room.");
+                         setCurrentRoomId(roomDoc.id);
+                         setIsHost(data.hostId === userId);
+                         setCurrentMode('multiplayerRoom'); 
+                         setRoomData(data); 
+                         return;
+                    }
+                    if (data.player2.id !== null) {
+                        displayMessageBox("The room is already full.");
+                        return;
+                    }
+
+                    await firebaseUpdateDoc(roomDoc.ref, {
+                        player2: {
+                            id: userId,
+                            name: userName,
+                            ready: false,
+                            reactionTime: 0,
+                            falseStart: false
+                        },
+                        lastUpdated: firebaseServerTimestamp() // Updated for activity tracking
+                    });
+                    setCurrentRoomId(roomDoc.id);
+                    setIsHost(false);
+                    setRoomData({
+                        ...data, 
+                        player2: { id: userId, name: userName, ready: false, reactionTime: 0, falseStart: false }
+                    });
+                    setCurrentMode('multiplayerRoom');
+                    displayMessageBox(`You have successfully joined room '${roomNameInput}'.`);
+                } catch (e) {
+                    console.error("Error joining room:", e);
+                    displayMessageBox("Error joining room: " + e.message);
+                }
+            };
+
+            const toggleReadyStatus = async () => {
+                if (!isAuthReady || !dbRef.current || !currentRoomId || !roomData) return;
+
+                const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
+                let updateData = {};
+
+                if (roomData.player1.id === userId) {
+                    updateData['player1.ready'] = !roomData.player1.ready;
+                } else if (roomData.player2.id === userId) {
+                    updateData['player2.ready'] = !roomData.player2.ready;
+                } else {
+                    console.warn("Attempt to change 'ready' status by a player not in the room.");
+                    return;
+                }
+
+                try {
+                    await firebaseUpdateDoc(roomDocRef, { ...updateData, lastUpdated: firebaseServerTimestamp() }); // Update activity
+                } catch (e) {
+                    console.error("Error updating 'ready' status:", e);
+                    displayMessageBox("Error changing 'ready' status: " + e.message);
+                }
+            };
+
+            const startGameMultiplayer = async () => {
+                if (!isHost || !isAuthReady || !dbRef.current || !currentRoomId || !roomData) return;
+                if (!roomData.player1.ready || !roomData.player2.ready) {
+                    displayMessageBox("Both players must be ready to start.");
+                    return;
+                }
+
+                const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
+                try {
+                    await firebaseUpdateDoc(roomDocRef, {
+                        status: 'countdown',
+                        countdownValue: 3,
+                        player1: { ...roomData.player1, reactionTime: 0, falseStart: false },
+                        player2: { ...roomData.player2, reactionTime: 0, falseStart: false },
+                        currentRoundStartTime: null, // This will be set to serverTimestamp when status goes green
+                        winnerName: null, 
+                        lastUpdated: firebaseServerTimestamp() // Updated for activity tracking
+                    });
+                } catch (e) {
+                    console.error("Error starting multiplayer game:", e);
+                    displayMessageBox("Error starting game: " + e.message);
+                }
+            };
+
+            React.useEffect(() => {
+                if (!isHost || currentMode !== 'multiplayerGame' || !roomData) return;
+
+                const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
+
+                if (roomData.status === 'countdown' && roomData.countdownValue > 0) {
+                    countdownTimeoutRef.current = setTimeout(async () => {
+                        await firebaseUpdateDoc(roomDocRef, {
+                            countdownValue: roomData.countdownValue - 1,
+                            lastUpdated: firebaseServerTimestamp() // Updated for activity tracking
+                        });
+                    }, 1000);
+                } else if (roomData.status === 'countdown' && roomData.countdownValue === 0) {
+                     setTimeout(async () => {
+                         await firebaseUpdateDoc(roomDocRef, {
+                             status: 'wait',
+                             lastUpdated: firebaseServerTimestamp() // Updated for activity tracking
+                         });
+                     }, 1000);
+                } else if (roomData.status === 'wait') {
+                    const randomDelay = Math.random() * 4500 + 500;
+                    greenLightTimeoutRef.current = setTimeout(async () => {
+                        await firebaseUpdateDoc(roomDocRef, {
+                            status: 'green',
+                            currentRoundStartTime: firebaseServerTimestamp(), // Set server timestamp here
+                            lastUpdated: firebaseServerTimestamp() // Updated for activity tracking
+                        });
+                    }, randomDelay);
+                } else if (roomData.status === 'green') {
+                    // MultiplayerRoundEndTimeout is handled in the listener for all clients as a fallback
+                    // The primary end of round is triggered by recordMultiplayerReaction
+                }
+                return () => clearAllTimeouts(); // Clean up timeouts on state changes
+            }, [roomData, isHost, currentMode, currentRoomId, dbRef, appId]);
+
+            const recordMultiplayerReaction = async (playerNum) => {
+                // Ensure roomData exists and status is 'green' or 'wait'
+                if (currentMode !== 'multiplayerGame' || !isAuthReady || !dbRef.current || !currentRoomId || !roomData || (roomData.status !== 'green' && roomData.status !== 'wait')) {
+                    console.log("recordMultiplayerReaction: Pre-conditions not met or incorrect status. isAuthReady:", isAuthReady, "dbRef.current:", !!dbRef.current, "currentRoomId:", currentRoomId, "roomData:", !!roomData, "roomData.status:", roomData.status);
+                    return;
+                }
+
+                const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
+                const playerPath = `player${playerNum}`;
+                const localPlayerRef = playerNum === 1 ? roomData.player1 : roomData.player2;
+                
+                console.log(`recordMultiplayerReaction: Attempting reaction for ${localPlayerRef.name}. Current status: ${roomData.status}`);
+                console.log("localPlayerRef.id:", localPlayerRef.id, "userId:", userId);
+
+                if (localPlayerRef.id !== userId) {
+                    console.warn("Attempt to update reaction of a player who is not you. Aborting.");
+                    return;
+                }
+                
+                // If the player already reacted or false-started, do nothing
+                if (localPlayerRef.reactionTime !== 0 || localPlayerRef.falseStart) {
+                    console.log("recordMultiplayerReaction: Player already reacted or false-started. Ignoring touch.");
+                    return;
+                }
+
+                let updateData = {};
+                let shouldEndRound = false; 
+
+                if (roomData.status === 'green') {
+                    const timeTaken = Date.now() - gameStartServerTimeMs; // Calculate relative to server start time
+                    updateData[`${playerPath}.reactionTime`] = timeTaken;
+                    console.log(`recordMultiplayerReaction: Recording valid reaction for ${localPlayerRef.name}: ${timeTaken} ms`);
+                    shouldEndRound = true; 
+                } else if (roomData.status === 'wait') {
+                    updateData[`${playerPath}.falseStart`] = true;
+                    displayMessageBox("False start! You touched too early.");
+                    console.log(`recordMultiplayerReaction: False start for ${localPlayerRef.name}.`);
+                    shouldEndRound = true; 
+                }
+
+                if (shouldEndRound && roomData.status !== 'result') { 
+                    updateData.status = 'result';
+                    console.log("recordMultiplayerReaction: Action completed. Setting status to 'result'.");
+                }
+
+                if (Object.keys(updateData).length > 0) {
+                    updateData.lastUpdated = firebaseServerTimestamp(); // Update activity
+                    clearAllTimeouts(); // Clear timeouts immediately upon reaction
+                    try {
+                        await firebaseUpdateDoc(roomDocRef, updateData);
+                        console.log("recordMultiplayerReaction: Firestore updated with reaction data and possible status change.");
+                    } catch (e) {
+                        console.error("recordMultiplayerReaction: Error updating Firestore:", e);
+                        displayMessageBox("Error recording reaction: " + e.message);
+                    }
+                } else {
+                    console.log("recordMultiplayerReaction: No data to update.");
+                }
+            };
+
+            React.useEffect(() => {
+                // Ensure this only runs for the host and if roomData is available
+                if (isHost && roomData && roomData.status === 'result' && isAuthReady && dbRef.current && currentRoomId) {
+                    // Prevent re-executing if winnerName is already set, indicating results are finalized
+                    if (roomData.winnerName !== null && roomData.winnerName !== undefined) {
+                        console.log("Multiplayer: Results already determined for this round. Skipping determineMultiplayerResults.");
+                        return;
+                    }
+                    determineMultiplayerResults();
+                }
+            }, [roomData?.status, roomData?.winnerName, isHost, isAuthReady, dbRef, currentRoomId]);
+
+
+            const determineMultiplayerResults = async () => {
+                if (!isHost || !roomData || roomData.status !== 'result') return;
+
+                let p1 = { ...roomData.player1 }; 
+                let p2 = { ...roomData.player2 };
+                let winnerName = null;
+
+                // Ensure that if they didn't react, their time is 9999
+                if (p1.reactionTime === 0 && !p1.falseStart) p1.reactionTime = 9999;
+                if (p2.reactionTime === 0 && !p2.falseStart) p2.reactionTime = 9999;
+
+                // Logic to determine the winner
+                if (p1.falseStart && p2.falseStart) {
+                    winnerName = "Tie (False Starts)";
+                } else if (p1.falseStart) {
+                    winnerName = `${p2.name} wins`; 
+                } else if (p2.falseStart) {
+                    winnerName = `${p1.name} wins`; 
+                } else {
+                    // Both reacted or neither reacted
+                    if (p1.reactionTime !== 9999 && p2.reactionTime !== 9999) { // Both reacted
+                        if (p1.reactionTime < p2.reactionTime) {
+                            winnerName = `${p1.name} wins (${p1.reactionTime} ms)`;
+                        } else if (p2.reactionTime < p1.reactionTime) {
+                            winnerName = `${p2.name} wins (${p2.reactionTime} ms)`;
+                        } else {
+                            winnerName = "Tie (same time)";
+                        }
+                    } else if (p1.reactionTime !== 9999) { // Only P1 reacted
+                        winnerName = `${p1.name} wins`; 
+                    } else if (p2.reactionTime !== 9999) { // Only P2 reacted
+                        winnerName = `${p2.name} wins`; 
+                    } else { // Neither reacted
+                        winnerName = "No one reacted in time";
+                    }
+                }
+                
+                try {
+                    await firebaseUpdateDoc(firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`), {
+                        winnerName: winnerName,
+                        'player1.reactionTime': p1.reactionTime,
+                        'player2.reactionTime': p2.reactionTime,
+                        lastUpdated: firebaseServerTimestamp() // Update activity
+                    });
+                    console.log("Multiplayer: Round results finalized and updated in Firestore.");
+                    // Also save multiplayer results to global leaderboard
+                    if (p1.reactionTime !== 9999 && !p1.falseStart) {
+                        saveScoreGlobal(p1.name, p1.reactionTime, 'multiplayer');
+                    }
+                    if (p2.reactionTime !== 9999 && !p2.falseStart) {
+                        saveScoreGlobal(p2.name, p2.reactionTime, 'multiplayer');
+                    }
+
+                } catch (e) {
+                    console.error("Error updating multiplayer results:", e);
+                    displayMessageBox("Error processing results: " + e.message);
+                }
+            };
+
+            const resetMultiplayerGame = async () => {
+                if (!isHost || !isAuthReady || !dbRef.current || !currentRoomId) return;
+
+                const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
+                try {
+                    await firebaseUpdateDoc(roomDocRef, {
+                        status: 'waiting', // Return to waiting state
+                        countdownValue: 3,
+                        'player1.ready': false,
+                        'player1.reactionTime': 0,
+                        'player1.falseStart': false,
+                        'player2.ready': false,
+                        'player2.reactionTime': 0,
+                        'player2.falseStart': false,
+                        currentRoundStartTime: null,
+                        winnerName: null,
+                        lastUpdated: firebaseServerTimestamp() // Update activity
+                    });
+                    console.log("Multiplayer: Room reset for a new round.");
+                    // gameStartServerTimeMs will reset in the listener when status is not 'green'
+                    setGameState('idle'); 
+                    clearAllTimeouts(); 
+                } catch (e) {
+                    console.error("Error resetting multiplayer game:", e);
+                    displayMessageBox("Error resetting room: " + e.message);
+                }
+            };
+
+            const leaveRoom = async () => {
+                if (!isAuthReady || !dbRef.current || !currentRoomId || !roomData) return;
+
+                const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
+                try {
+                    if (isHost) {
+                        await firebaseDeleteDoc(roomDocRef); 
+                        console.log("Multiplayer: Room deleted by host.");
+                        displayMessageBox("You have closed the room.");
+                    } else {
+                        // If player 2 leaves, clear their entry
+                        if (roomData.player2.id === userId) {
+                            await firebaseUpdateDoc(roomDocRef, {
+                                player2: { id: null, name: null, ready: false, reactionTime: 0, falseStart: false },
+                                lastUpdated: firebaseServerTimestamp() // Update activity
+                            });
+                        } else if (roomData.player1.id === userId && roomData.player2.id) { 
+                            // If player 1 leaves and there is a player 2, player 2 becomes host
+                            // This only happens if player1 is the one leaving the room and is not the original host
+                            // (which is already a rare condition because the original host is player1)
+                            // Host assignment logic is more complex, here we just clear their slot
+                            // and player2 would be left alone in the room, and would eventually become host if there's no one.
+                             await firebaseUpdateDoc(roomDocRef, {
+                                 player1: { id: null, name: null, ready: false, reactionTime: 0, falseStart: false },
+                                 lastUpdated: firebaseServerTimestamp()
+                             });
+                            console.log("Multiplayer: Player 1 left the room.");
+                            displayMessageBox("You have left the room.");
+
+                        } else {
+                            console.log("Multiplayer: You have left the room.");
+                            displayMessageBox("You have left the room.");
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error leaving room:", e);
+                    displayMessageBox("Error leaving room: " + e.message);
+                } finally {
+                    setCurrentRoomId(null);
+                    setRoomData(null);
+                    setIsHost(false);
+                    setCurrentMode('menu'); 
+                    clearAllTimeouts();
+                    setGameStartServerTimeMs(0); // Reset game start time
+                }
+            };
+
+
+            // --------------------------------------------------
+            // Event Listeners (Keyboard)
+            // --------------------------------------------------
+            React.useEffect(() => {
+                const handleKeyDown = (event) => {
+                    if (event.code === 'Space') {
+                        event.preventDefault();
+                        // For individual mode
+                        if (currentMode === 'individual') { 
+                            if (gameState === 'idle') {
+                                handleStartIndividualGame(currentMode);
+                            } else if (gameState === 'green' || gameState === 'wait') {
+                                recordIndividualReaction();
+                            } else if (gameState === 'result') {
+                                resetIndividualGame();
+                            }
+                        }
+                        // For multiplayer mode, reaction is on the general clickable area
+                        // The spacebar button activates reaction if you are on the multiplayer game screen
+                        else if (currentMode === 'multiplayerGame' && (gameState === 'green' || gameState === 'wait')) {
+                            recordMultiplayerReaction(roomData.player1.id === userId ? 1 : 2);
+                        }
+                    }
+                };
+
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [gameState, userName, currentMode, reactionTime, userId, isHost, roomData, gameStartServerTimeMs]); 
+
+            // --------------------------------------------------
+            // Helper for Background Color
+            // --------------------------------------------------
+            const getBackgroundColor = () => {
+                if (currentMode === 'multiplayerGame' && roomData) {
+                    switch (roomData.status) {
+                        case 'countdown':
+                        case 'wait':
+                            return 'bg-red-600';
+                        case 'green':
+                            return 'bg-green-600';
+                        case 'result':
+                            // Keep the initial menu background color for the results screen
+                            return 'bg-gray-800'; 
+                        default:
+                            return 'bg-gray-800'; 
+                    }
+                } else if (currentMode === 'individual') { // Only 'individual' uses gameState directly for color
+                    switch (gameState) {
+                        case 'idle':
+                        case 'countdown':
+                        case 'wait':
+                            return 'bg-red-600';
+                        case 'green':
+                            return 'bg-green-600';
+                        case 'result':
+                        case 'saving':
+                            return 'bg-blue-600';
+                        default:
+                            return 'bg-gray-800';
+                    }
+                } else if (currentMode === 'leaderboards') {
+                    return 'bg-gray-900'; // Specific background for leaderboards
+                }
+                return 'bg-gray-800'; 
+            };
+
+            // --------------------------------------------------
+            // Render Logic (JSX)
+            // --------------------------------------------------
+            return (
+                <div className={`relative min-h-screen w-full flex flex-col items-center justify-center font-inter text-white transition-colors duration-300 ${getBackgroundColor()}`}>
+                    {/* Custom Message Box */}
+                    {isMessageBoxVisible && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <div className="bg-white text-gray-800 p-6 rounded-lg shadow-xl max-w-sm w-full mx-4 flex flex-col items-center">
+                                <p className="text-xl font-semibold text-center mb-4">{message}</p>
+                                <button
+                                    onClick={closeMessageBox}
+                                    className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full transition duration-300 transform hover:scale-105 shadow-lg"
+                                >
+                                    Cerrar
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Main Menu */}
+                    {currentMode === 'menu' && (
+                        <div className="flex flex-col items-center space-y-6 p-8 bg-gray-800 bg-opacity-90 rounded-xl shadow-2xl">
+                            <h1 className="text-5xl font-extrabold mb-2 text-center text-yellow-400">Gunchoicer</h1>
+                            {/* Version displayed on main menu */}
+                            <p className="text-gray-400 text-base mb-4 opacity-80">Versión: Beta3.3</p>
+                            <p className="text-xl text-center mb-6">¡Elige tu modo de duelo!</p>
+                            <button
+                                onClick={() => setCurrentMode('individual')}
+                                className="w-80 bg-green-500 hover:bg-green-700 text-white font-bold py-4 px-8 rounded-full text-2xl transition duration-300 transform hover:scale-105 shadow-lg"
+                            >
+                                Modo Individual
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (!isAuthReady || !userId) {
+                                        // Show "Firebase not ready" message here if it's an initial connection issue.
+                                        displayMessageBox("Firebase connection is not ready. Make sure you have internet and try again.");
+                                        return;
+                                    }
+                                    setCurrentMode('multiplayerLobby');
+                                }}
+                                className="w-80 bg-red-500 hover:bg-red-700 text-white font-bold py-4 px-8 rounded-full text-2xl transition duration-300 transform hover:scale-105 shadow-lg"
+                            >
+                                Modo Multijugador
+                            </button>
+                            {/* New Leaderboards button */}
+                            <button
+                                onClick={() => setCurrentMode('leaderboards')}
+                                className="w-80 bg-blue-500 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full text-2xl transition duration-300 transform hover:scale-105 shadow-lg"
+                            >
+                                Marcadores
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Individual Game Screen */}
+                    {currentMode === 'individual' && (
+                        <div
+                            className="relative flex flex-col items-center justify-center w-full max-w-4xl h-[70vh] rounded-xl shadow-2xl p-6 cursor-pointer"
+                            onClick={recordIndividualReaction}
+                        >
+                            {gameState === 'idle' && (
+                                <div className="flex flex-col items-center space-y-6">
+                                    <h2 className="text-4xl font-extrabold mb-4 text-center">Duelo Individual</h2>
+                                    {/* Updated message */}
+                                    <p className="text-xl text-center">Introduce un nombre para salir en el marcador global (opcional)</p>
+                                    <input
+                                        type="text"
+                                        placeholder="Tu nombre (opcional)"
+                                        value={userName}
+                                        onChange={(e) => setUserName(e.target.value)}
+                                        className="p-3 text-lg rounded-lg border-2 border-gray-300 text-gray-800 w-full max-w-xs text-center focus:ring-blue-500 focus:border-blue-500"
+                                        maxLength="20"
+                                    />
+                                    <button
+                                        onClick={() => handleStartIndividualGame(currentMode)}
+                                        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                    >
+                                        Empezar Duelo
+                                    </button>
+                                    <button
+                                        onClick={() => setCurrentMode('menu')}
+                                        className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-full text-lg mt-4 transition duration-300 transform hover:scale-105 shadow-lg"
+                                    >
+                                        Volver al Menú
+                                    </button>
+                                    {localGameHistory.filter(item => item.mode === 'individual').length > 0 && (
+                                        <div className="w-full max-w-xs mt-8 p-4 bg-gray-800 bg-opacity-75 rounded-xl shadow-inner border border-gray-700">
+                                            <h3 className="text-2xl font-bold text-center mb-4 text-yellow-400">Historial (Últimas 5)</h3>
+                                            <ol className="list-decimal list-inside text-base text-gray-200">
+                                                {localGameHistory.filter(item => item.mode === 'individual').reverse().map((entry, idx) => (
+                                                    <li key={idx} className={`flex justify-between items-center py-1 px-2 rounded-md ${idx % 2 === 0 ? 'bg-gray-700' : 'bg-gray-600'}`}>
+                                                        <span className="font-semibold text-white">{entry.name}</span>
+                                                        <span className="text-green-300">{entry.reactionTime} ms</span>
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {gameState === 'countdown' && (
+                                <h2 className="text-8xl font-black animate-pulse">{countdownValue}</h2>
+                            )}
+
+                            {gameState === 'wait' && (
+                                <h2 className="text-5xl font-bold">¡Prepárate!</h2>
+                            )}
+
+                            {gameState === 'green' && (
+                                <h2 className="text-5xl font-bold animate-bounce">¡DISPARA!</h2>
+                            )}
+
+                            {gameState === 'result' && (
+                                <div className="flex flex-col items-center space-y-4">
+                                    {reactionTime > 0 ? (
+                                        <>
+                                            <h2 className="text-5xl font-extrabold text-center">
+                                                ¡Tu tiempo: <span className="text-yellow-300">{reactionTime}</span> ms!
+                                            </h2>
+                                        </>
+                                    ) : (
+                                        <h2 className="text-5xl font-extrabold text-center text-red-300">¡Falso inicio!</h2>
+                                    )}
+                                    <button
+                                        onClick={resetIndividualGame}
+                                        className="bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                    >
+                                        Jugar de Nuevo
+                                    </button>
+                                    <button
+                                        onClick={() => setCurrentMode('menu')}
+                                        className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-full text-lg mt-4 transition duration-300 transform hover:scale-105 shadow-lg"
+                                    >
+                                        Volver al Menú
+                                    </button>
+                                    {localGameHistory.filter(item => item.mode === 'individual').length > 0 && (
+                                        <div className="w-full max-w-xs mt-8 p-4 bg-gray-800 bg-opacity-75 rounded-xl shadow-inner border border-gray-700">
+                                            <h3 className="text-2xl font-bold text-center mb-4 text-yellow-400">Historial (Últimas 5)</h3>
+                                            <ol className="list-decimal list-inside text-base text-gray-200">
+                                                {localGameHistory.filter(item => item.mode === 'individual').reverse().map((entry, idx) => (
+                                                    <li key={idx} className={`flex justify-between items-center py-1 px-2 rounded-md ${idx % 2 === 0 ? 'bg-gray-700' : 'bg-gray-600'}`}>
+                                                        <span className="font-semibold text-white">{entry.name}</span>
+                                                        <span className="text-green-300">{entry.reactionTime} ms</span>
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Multiplayer Lobby (Create/Join Room) - Input screen */}
+                    {currentMode === 'multiplayerLobby' && (
+                        <>
+                            {/* New Back Button (Top-Left) */}
+                            <button
+                                onClick={() => setCurrentMode('menu')}
+                                className="absolute top-4 left-4 bg-gray-600 hover:bg-gray-700 text-white p-3 rounded-full transition duration-300 transform hover:scale-105 shadow-lg z-10"
+                                aria-label="Volver al Menú"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                                </svg>
+                            </button>
+                            {/* Main Lobby Content */}
+                            <div className="flex flex-col items-center space-y-6 p-8 bg-gray-800 bg-opacity-90 rounded-xl shadow-2xl w-full max-w-md">
+                                <h2 className="text-4xl font-extrabold mb-4 text-center text-yellow-400">Modo Multijugador</h2>
+                                
+                                {/* Your User ID with eye button */}
+                                <div className="flex items-center justify-center w-full mb-2">
+                                    <p className="text-base text-center">Tu ID de usuario: </p>
+                                    <span className={`font-bold text-green-300 break-all ml-2 ${showUserId ? '' : 'hidden'} text-base`}>
+                                        {userId || "Cargando..."}
+                                    </span>
+                                    <button
+                                        onClick={() => setShowUserId(prev => !prev)}
+                                        className="ml-2 p-1 rounded-full bg-gray-600 hover:bg-gray-500 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        title={showUserId ? "Hide ID" : "Show ID"}
+                                    >
+                                        <span className="text-xl">{showUserId ? '🙈' : '👁️'}</span>
+                                    </button>
+                                </div>
+
+                                <input
+                                    type="text"
+                                    placeholder="Tu nombre de jugador"
+                                    value={userName}
+                                    onChange={(e) => setUserName(e.target.value)}
+                                    className="p-3 text-lg rounded-lg border-2 border-gray-300 text-gray-800 w-full text-center focus:ring-blue-500 focus:border-blue-500"
+                                    maxLength="20"
+                                />
+
+                                <input
+                                    type="text"
+                                    placeholder="Nombre de la sala"
+                                    value={roomNameInput}
+                                    onChange={(e) => setRoomNameInput(e.target.value)}
+                                    className="p-3 text-lg rounded-lg border-2 border-gray-300 text-gray-800 w-full text-center focus:ring-blue-500 focus:border-blue-500"
+                                    maxLength="20"
+                                />
+                                <input
+                                    type="password"
+                                    placeholder="Contraseña de la sala"
+                                    value={passwordInput}
+                                    onChange={(e) => setPasswordInput(e.target.value)}
+                                    className="p-3 text-lg rounded-lg border-2 border-gray-300 text-gray-800 w-full text-center focus:ring-blue-500 focus:border-blue-500"
+                                    maxLength="20"
+                                />
+                                
+                                {/* Updated and smaller message */}
+                                <p className="text-yellow-400 text-center text-xs font-bold">
+                                    Due to devices potentially having synchronization difficulties, it is recommended that players look at the same screen (preferably the room creator's).
+                                </p>
+
+                                <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 w-full">
+                                    <button
+                                        onClick={createRoom}
+                                        disabled={!userName.trim() || !roomNameInput.trim() || !passwordInput.trim() || !isAuthReady || currentRoomId !== null}
+                                        className="flex-1 bg-blue-500 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                    >
+                                        Crear Sala
+                                    </button>
+                                    <button
+                                        onClick={joinRoom}
+                                        disabled={!userName.trim() || !roomNameInput.trim() || !passwordInput.trim() || !isAuthReady || currentRoomId !== null}
+                                        className="flex-1 bg-green-500 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                    >
+                                        Unirse a Sala
+                                    </button>
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    {/* Multiplayer Room (Lobby after joining/creating) */}
+                    {currentMode === 'multiplayerRoom' && ( 
+                         <div className="w-full max-w-md mt-8 p-6 bg-gray-700 rounded-xl shadow-2xl border border-gray-600 flex flex-col items-center space-y-6">
+                            {!currentRoomId || !roomData ? ( 
+                                <p className="text-xl text-center text-yellow-300">Loading room details...</p>
+                            ) : (
+                                <> 
+                                    <h3 className="text-3xl font-bold text-center text-yellow-300 mb-4">Sala: {roomData.roomId}</h3>
+                                    {/* Your User ID with eye button */}
+                                    <div className="flex items-center justify-center w-full mb-6">
+                                        <p className="text-base text-center">Tu ID de usuario: </p>
+                                        <span className={`font-bold text-green-300 break-all ml-2 ${showUserId ? '' : 'hidden'} text-base`}>
+                                            {userId || "Cargando..."}
+                                        </span>
+                                        <button
+                                            onClick={() => setShowUserId(prev => !prev)}
+                                            className="ml-2 p-1 rounded-full bg-gray-600 hover:bg-gray-500 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            title={showUserId ? "Hide ID" : "Show ID"}
+                                        >
+                                            <span className="text-xl">{showUserId ? '🙈' : '👁️'}</span>
+                                        </button>
+                                    </div>
+
+                                    <p className="text-lg text-center mb-4">Estado: {
+                                        roomData.status === 'waiting' ? 'Waiting for players...' :
+                                        roomData.status === 'countdown' ? `Starting: ${roomData.countdownValue}` :
+                                        roomData.status === 'playing' ? 'In game' :
+                                        roomData.status === 'result' ? 'Results' :
+                                        'Unknown'
+                                    }</p>
+                                    <div className="flex justify-around items-center text-xl font-semibold w-full mb-6">
+                                        <div className="text-center">
+                                            <p className="text-blue-300">{roomData.player1.name || "Waiting..."}</p>
+                                            <p className={`${roomData.player1.ready ? 'text-green-400' : 'text-red-400'}`}>
+                                                {roomData.player1.ready ? 'READY' : 'NOT READY'}
+                                            </p>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-blue-300">{roomData.player2.name || "Waiting..."}</p>
+                                            <p className={`${roomData.player2.ready ? 'text-green-400' : 'text-red-400'}`}>
+                                                {roomData.player2.ready ? 'READY' : 'NOT READY'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col space-y-4 w-full">
+                                        <button
+                                            onClick={toggleReadyStatus}
+                                            disabled={roomData.player1.id !== userId && roomData.player2.id !== userId}
+                                            className="w-full bg-orange-500 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                        >
+                                            {(roomData.player1.id === userId && roomData.player1.ready) || (roomData.player2.id === userId && roomData.player2.ready) ? 'Undo Ready' : 'Ready'}
+                                        </button>
+                                        {isHost && (
+                                            <button
+                                                onClick={startGameMultiplayer}
+                                                disabled={!roomData.player1.ready || !roomData.player2.ready || roomData.status !== 'waiting'}
+                                                className="w-full bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                            >
+                                                Start Duel
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={leaveRoom}
+                                            className="flex-1 bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full text-lg transition duration-300 transform hover:scale-105 shadow-lg"
+                                        >
+                                            {isHost ? 'Close Room' : 'Leave Room'}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Multiplayer Game Screen */}
+                    {currentMode === 'multiplayerGame' && roomData && (
+                        <div
+                            className="relative flex flex-col items-center justify-center w-full max-w-4xl h-[70vh] rounded-xl shadow-2xl p-6 cursor-pointer"
+                            onClick={() => recordMultiplayerReaction(roomData.player1.id === userId ? 1 : 2)}
+                        >
+                            {roomData.status === 'countdown' && (
+                                <h2 className="text-8xl font-black animate-pulse">{countdownValue}</h2>
+                            )}
+
+                            {roomData.status === 'wait' && (
+                                <h2 className="text-5xl font-bold">¡Prepárate!</h2>
+                            )}
+
+                            {roomData.status === 'green' && (
+                                <h2 className="text-5xl font-bold animate-bounce">¡DISPARA!</h2>
+                            )}
+
+                            {roomData.status === 'result' && (
+                                <div className="flex flex-col items-center space-y-4">
+                                    <h2 className="text-5xl font-extrabold text-center">Round Results</h2>
+                                    <p className="text-3xl font-bold text-yellow-300 mb-4">{roomData.winnerName}</p>
+
+                                    <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-8">
+                                        {/* Player 1 Result Box */}
+                                        <div className={`text-center p-4 rounded-lg shadow-md ${
+                                            (roomData.player1.falseStart || roomData.player1.reactionTime === 9999) ? 'bg-red-700' : 'bg-green-700'
+                                        }`}>
+                                            <h3 className="text-2xl font-bold text-blue-300">{roomData.player1.name}</h3>
+                                            {roomData.player1.falseStart || roomData.player1.reactionTime === 9999 ? (
+                                                <p className="text-xl text-yellow-300">💀</p> 
+                                            ) : (
+                                                <p className="text-xl text-yellow-300">
+                                                    {`${roomData.player1.reactionTime} ms`}
+                                                </p>
+                                            )}
+                                        </div>
+                                        {/* Player 2 Result Box */}
+                                        <div className={`text-center p-4 rounded-lg shadow-md ${
+                                            (roomData.player2.falseStart || roomData.player2.reactionTime === 9999) ? 'bg-red-700' : 'bg-green-700'
+                                        }`}>
+                                            <h3 className="text-2xl font-bold text-blue-300">{roomData.player2.name}</h3>
+                                            {roomData.player2.falseStart || roomData.player2.reactionTime === 9999 ? (
+                                                <p className="text-xl text-yellow-300">💀</p> 
+                                            ) : (
+                                                <p className="text-xl text-yellow-300">
+                                                    {`${roomData.player2.reactionTime} ms`}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 w-full max-w-sm mt-6">
+                                        {isHost && (
+                                            <button
+                                                onClick={resetMultiplayerGame}
+                                                className="flex-1 bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                            >
+                                                Play Another Round
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={leaveRoom}
+                                            className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-full text-lg transition duration-300 transform hover:scale-105 shadow-lg"
+                                        >
+                                            Back to Main Menu 
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Leaderboards Screen */}
+                    {currentMode === 'leaderboards' && (
+                        <div className="flex flex-col items-center space-y-6 p-8 bg-gray-800 bg-opacity-90 rounded-xl shadow-2xl w-full max-w-2xl min-h-[500px]">
+                            <h2 className="text-4xl font-extrabold mb-4 text-center text-yellow-400">Marcadores Globales</h2>
+                            
+                            <div className="flex space-x-4 mb-4">
+                                <button
+                                    onClick={() => setShowDailyScores(false)}
+                                    className={`py-2 px-6 rounded-full text-lg font-bold transition duration-300 ${!showDailyScores ? 'bg-blue-500 hover:bg-blue-700' : 'bg-gray-600 hover:bg-gray-700'} text-white shadow-lg`}
+                                >
+                                    Global
+                                </button>
+                                <button
+                                    onClick={() => setShowDailyScores(true)}
+                                    className={`py-2 px-6 rounded-full text-lg font-bold transition duration-300 ${showDailyScores ? 'bg-blue-500 hover:bg-blue-700' : 'bg-gray-600 hover:bg-gray-700'} text-white shadow-lg`}
+                                >
+                                    Diario
+                                </button>
+                            </div>
+
+                            {(showDailyScores ? dailyScores : globalScores).length === 0 ? (
+                                <p className="text-xl text-gray-400">No hay puntuaciones aún. ¡Sé el primero en jugar!</p>
+                            ) : (
+                                <div className="w-full overflow-x-auto rounded-lg shadow-inner border border-gray-700">
+                                    <table className="min-w-full text-left text-lg text-gray-200">
+                                        <thead className="bg-gray-700 border-b border-gray-600">
+                                            <tr>
+                                                <th scope="col" className="px-6 py-3 font-medium text-blue-300">#</th>
+                                                <th scope="col" className="px-6 py-3 font-medium text-blue-300">Nombre</th>
+                                                <th scope="col" className="px-6 py-3 font-medium text-blue-300">Tiempo (ms)</th>
+                                                <th scope="col" className="px-6 py-3 font-medium text-blue-300">Modo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {(showDailyScores ? dailyScores : globalScores).map((score, index) => (
+                                                <tr key={score.id} className={`${index % 2 === 0 ? 'bg-gray-800' : 'bg-gray-700'} hover:bg-gray-600 border-b border-gray-700`}>
+                                                    <td className="px-6 py-4 font-semibold">{index + 1}</td>
+                                                    <td className="px-6 py-4">{score.name}</td>
+                                                    <td className="px-6 py-4 text-green-300 font-bold">{score.reactionTime}</td>
+                                                    <td className="px-6 py-4 capitalize">{score.gameMode}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                            <button
+                                onClick={() => setCurrentMode('menu')}
+                                className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-full text-lg mt-6 transition duration-300 transform hover:scale-105 shadow-lg"
+                            >
+                                Volver al Menú
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Render the App component into the root div
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
+
+
