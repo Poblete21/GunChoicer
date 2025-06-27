@@ -47,11 +47,13 @@
             match /artifacts/{appId}/public/data/rooms/{roomId} {
               allow read: if true; // Cualquier persona puede leer las salas (para unirse)
               allow create: if request.auth != null; // Solo usuarios autenticados pueden crear
-              // Regla de actualización mejorada para permitir que el segundo jugador se una
+              // Regla de actualización: Permite al host actualizar CUALQUIER COSA,
+              // y a cualquier jugador (player1 o player2) actualizar sus propios campos.
               allow update: if request.auth != null && (
-                resource.data.player1.id == request.auth.uid ||
-                (resource.data.player2.id == null && request.resource.data.player2.id == request.auth.uid) ||
-                (resource.data.player2.id == request.auth.uid && request.resource.data.player2.id != null)
+                resource.data.hostId == request.auth.uid || // Host puede actualizar cualquier cosa
+                (resource.data.player1.id == request.auth.uid && request.resource.data.player1 != null) || // Player1 puede actualizar sus propios datos
+                (resource.data.player2.id == request.auth.uid && request.resource.data.player2 != null) || // Player2 puede actualizar sus propios datos
+                (resource.data.player2.id == null && request.resource.data.player2.id == request.auth.uid && request.resource.data.player2.name != null) // Permitir que player2 se una por primera vez
               );
               // La regla de borrado sigue siendo la misma: solo los jugadores establecidos pueden borrar
               allow delete: if request.auth != null && (resource.data.player1.id == request.auth.uid || resource.data.player2.id == request.auth.uid);
@@ -482,7 +484,6 @@
                         return;
                     }
 
-                    // SOLO SI player2 es null, se permite actualizar
                     await firebaseUpdateDoc(roomDoc.ref, {
                         player2: {
                             id: userId,
@@ -598,14 +599,20 @@
             }, [roomData, isHost, currentMode, currentRoomId, dbRef, appId]);
 
             const recordMultiplayerReaction = async (playerNum) => {
-                if (currentMode !== 'multiplayerGame' || !isAuthReady || !dbRef.current || !currentRoomId || !roomData) return;
+                if (currentMode !== 'multiplayerGame' || !isAuthReady || !dbRef.current || !currentRoomId || !roomData) {
+                    console.log("recordMultiplayerReaction: Pre-condiciones no cumplidas. isAuthReady:", isAuthReady, "dbRef.current:", !!dbRef.current, "currentRoomId:", currentRoomId, "roomData:", !!roomData);
+                    return;
+                }
 
                 const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
                 const playerPath = `player${playerNum}`;
                 const localPlayerRef = playerNum === 1 ? roomData.player1 : roomData.player2;
 
+                console.log(`recordMultiplayerReaction: Intentando reacción para ${localPlayerRef.name}. Estado actual: ${roomData.status}`);
+                console.log("localPlayerRef.id:", localPlayerRef.id, "userId:", userId);
+
                 if (localPlayerRef.id !== userId) {
-                    console.warn("Intento de actualizar reacción de un jugador que no eres tú.");
+                    console.warn("Intento de actualizar reacción de un jugador que no eres tú. Abortando.");
                     return;
                 }
 
@@ -613,19 +620,23 @@
                     const endTime = performance.now();
                     const timeTaken = Math.round(endTime - startTime); 
                     
+                    console.log(`recordMultiplayerReaction: Registrando reacción de ${localPlayerRef.name}: ${timeTaken} ms`);
                     await firebaseUpdateDoc(roomDocRef, {
                         [`${playerPath}.reactionTime`]: timeTaken,
                         lastUpdated: firebaseServerTimestamp()
                     });
-                    console.log(`Reacción de ${localPlayerRef.name} registrada: ${timeTaken} ms`);
+                    console.log(`Reacción de ${localPlayerRef.name} registrada: ${timeTaken} ms. Firestore actualizado.`);
 
                 } else if (roomData.status === 'wait' && !localPlayerRef.falseStart) {
+                    console.log(`recordMultiplayerReaction: Falso inicio para ${localPlayerRef.name}.`);
                     await firebaseUpdateDoc(roomDocRef, {
                         [`${playerPath}.falseStart`]: true,
                         lastUpdated: firebaseServerTimestamp()
                     });
                     displayMessageBox("¡Falso inicio! Tocaste demasiado pronto.");
-                    console.log(`Falso inicio de ${localPlayerRef.name}`);
+                    console.log(`Falso inicio de ${localPlayerRef.name}. Firestore actualizado.`);
+                } else {
+                    console.log(`recordMultiplayerReaction: No se permite la reacción en el estado actual (${roomData.status}) o ya reaccionó/falso inicio.`);
                 }
             };
 
@@ -643,10 +654,10 @@
                 if (p1.falseStart && p2.falseStart) {
                     winnerName = "Empate (Falsos inicios)";
                 } else if (p1.falseStart) {
-                    winnerName = `${p2.name} gana (Falso inicio de ${p1.name})`;
+                    winnerName = `${p2.name} gana`; // Simplificado: ya no menciona el falso inicio del otro
                     if (p2.reactionTime === 0) p2.reactionTime = 9999;
                 } else if (p2.falseStart) {
-                    winnerName = `${p1.name} gana (Falso inicio de ${p2.name})`;
+                    winnerName = `${p1.name} gana`; // Simplificado: ya no menciona el falso inicio del otro
                     if (p1.reactionTime === 0) p1.reactionTime = 9999;
                 } else {
                     if (p1.reactionTime > 0 && p2.reactionTime > 0 && p1.reactionTime !== 9999 && p2.reactionTime !== 9999) {
@@ -658,10 +669,10 @@
                             winnerName = "Empate (mismo tiempo)";
                         }
                     } else if (p1.reactionTime > 0 && p1.reactionTime !== 9999) {
-                        winnerName = `${p1.name} gana (Jugador 2 no reaccionó)`;
+                        winnerName = `${p1.name} gana`; // Simplificado
                         p2.reactionTime = 9999;
                     } else if (p2.reactionTime > 0 && p2.reactionTime !== 9999) {
-                        winnerName = `${p2.name} gana (Jugador 1 no reaccionó)`;
+                        winnerName = `${p2.name} gana`; // Simplificado
                         p1.reactionTime = 9999;
                     } else {
                         winnerName = "Nadie reaccionó a tiempo";
@@ -775,7 +786,8 @@
                         case 'green':
                             return 'bg-green-600';
                         case 'result':
-                            return 'bg-blue-600';
+                            // Mantener el color de fondo del menú de inicio para la pantalla de resultados
+                            return 'bg-gray-800'; 
                         default:
                             return 'bg-gray-800'; 
                     }
@@ -952,8 +964,8 @@
                             
                             {/* Tu ID de usuario con botón de ojo */}
                             <div className="flex items-center justify-center w-full mb-2">
-                                <p className="text-base text-center">Tu ID de usuario: </p> {/* text-base para el tamaño */}
-                                <span className={`font-bold text-green-300 break-all ml-2 ${showUserId ? '' : 'hidden'} text-base`}> {/* text-base aquí también */}
+                                <p className="text-base text-center">Tu ID de usuario: </p>
+                                <span className={`font-bold text-green-300 break-all ml-2 ${showUserId ? '' : 'hidden'} text-base`}>
                                     {userId || "Cargando..."}
                                 </span>
                                 <button
@@ -1031,8 +1043,8 @@
                                     <h3 className="text-3xl font-bold text-center text-yellow-300 mb-4">Sala: {roomData.roomId}</h3>
                                     {/* Tu ID de usuario con botón de ojo */}
                                     <div className="flex items-center justify-center w-full mb-6">
-                                        <p className="text-base text-center">Tu ID de usuario: </p> {/* text-base para el tamaño */}
-                                        <span className={`font-bold text-green-300 break-all ml-2 ${showUserId ? '' : 'hidden'} text-base`}> {/* text-base aquí también */}
+                                        <p className="text-base text-center">Tu ID de usuario: </p>
+                                        <span className={`font-bold text-green-300 break-all ml-2 ${showUserId ? '' : 'hidden'} text-base`}>
                                             {userId || "Cargando..."}
                                         </span>
                                         <button
@@ -1118,23 +1130,29 @@
                                     <p className="text-3xl font-bold text-yellow-300 mb-4">{roomData.winnerName}</p>
 
                                     <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-8">
-                                        <div className="text-center p-4 rounded-lg bg-gray-700">
+                                        {/* Player 1 Result Box */}
+                                        <div className={`text-center p-4 rounded-lg shadow-md ${
+                                            (roomData.player1.falseStart || roomData.player1.reactionTime === 9999) ? 'bg-red-700' : 'bg-green-700'
+                                        }`}>
                                             <h3 className="text-2xl font-bold text-blue-300">{roomData.player1.name}</h3>
-                                            {roomData.player1.falseStart ? (
-                                                <p className="text-xl text-red-400">¡Falso inicio! 💀</p>
+                                            {roomData.player1.falseStart || roomData.player1.reactionTime === 9999 ? (
+                                                <p className="text-xl text-yellow-300">💀</p> 
                                             ) : (
-                                                <p className="text-xl text-green-300">
-                                                    {roomData.player1.reactionTime === 9999 ? '💀 (No reaccionó)' : `${roomData.player1.reactionTime} ms`}
+                                                <p className="text-xl text-yellow-300">
+                                                    {`${roomData.player1.reactionTime} ms`}
                                                 </p>
                                             )}
                                         </div>
-                                        <div className="text-center p-4 rounded-lg bg-gray-700">
+                                        {/* Player 2 Result Box */}
+                                        <div className={`text-center p-4 rounded-lg shadow-md ${
+                                            (roomData.player2.falseStart || roomData.player2.reactionTime === 9999) ? 'bg-red-700' : 'bg-green-700'
+                                        }`}>
                                             <h3 className="text-2xl font-bold text-blue-300">{roomData.player2.name}</h3>
-                                            {roomData.player2.falseStart ? (
-                                                <p className="text-xl text-red-400">¡Falso inicio! 💀</p>
+                                            {roomData.player2.falseStart || roomData.player2.reactionTime === 9999 ? (
+                                                <p className="text-xl text-yellow-300">💀</p> 
                                             ) : (
-                                                <p className="text-xl text-green-300">
-                                                    {roomData.player2.reactionTime === 9999 ? '💀 (No reaccionó)' : `${roomData.player2.reactionTime} ms`}
+                                                <p className="text-xl text-yellow-300">
+                                                    {`${roomData.player2.reactionTime} ms`}
                                                 </p>
                                             )}
                                         </div>
