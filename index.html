@@ -26,11 +26,11 @@
     
     <!-- Firebase CDNs (Reintroduced for Multiplayer) -->
     <script type="module">
-        // Importaciones de Firebase corregidas:
+        // Importaciones de Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-        // Asegurarse de importar getDocs junto con las demás funciones de Firestore
-        import { getFirestore, collection, addDoc, onSnapshot, doc, getDoc, updateDoc, query, where, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+        // Asegurarse de importar deleteDoc junto con las demás funciones de Firestore
+        import { getFirestore, collection, addDoc, onSnapshot, doc, getDoc, updateDoc, query, where, serverTimestamp, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
 
         // =========================================================================================
         // ¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡ IMPORTANTE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -56,15 +56,16 @@
         */
         // =========================================================================================
         const firebaseConfig = {
-            apiKey: "AIzaSyAF06nJHV5zYb4W-vUrrn8MJ1Ft_5CjV_s", // <--- REEMPLAZA ESTO
-            authDomain: "gunchoicer-21f0f.firebaseapp.com", // <--- REEMPLAZA ESTO
-            projectId: "gunchoicer-21f0f", // <--- REEMPLAZA ESTO
-            storageBucket: "gunchoicer-21f0f.firebasestorage.app", // <--- REEMPLAZA ESTO
-            messagingSenderId: "244865223861", // <--- REEMPLAZA ESTO
-            appId: "1:244865223861:web:7ab86ba9bece24f70d02fc", // <--- REEMPLAZA ESTO
-            measurementId: "G-JNWD47M3GV" // <--- REEMPLAZA ESTO (si tienes)
+        const firebaseConfig = {
+            apiKey: "AIzaSyAF06nJHV5zYb4W-vUrrn8MJ1Ft_5CjV_s",
+            authDomain: "gunchoicer-21f0f.firebaseapp.com",
+            projectId: "gunchoicer-21f0f",
+            storageBucket: "gunchoicer-21f0f.firebasestorage.app",
+            messagingSenderId: "244865223861",
+            appId: "1:244865223861:web:7ab86ba9bece24f70d02fc",
+            measurementId: "G-JNWD47M3GV"
         };
-
+        
         console.log("Firebase: Iniciando inicialización de la aplicación.");
         try {
             const app = initializeApp(firebaseConfig);
@@ -111,6 +112,7 @@
             window.firebaseWhere = where; // Añadido para consultas
             window.firebaseServerTimestamp = serverTimestamp;
             window.firebaseGetDocs = getDocs;
+            window.firebaseDeleteDoc = deleteDoc;
 
             // Define un appId global consistente
             window.__app_id = 'gunchoicer-multiplayer-app'; // Nuevo ID de aplicación para multiplayer
@@ -131,13 +133,12 @@
             firebaseApp, firebaseAuth, firebaseSignInAnonymously, firebaseOnAuthStateChanged,
             firebaseFirestore, firebaseCollection, firebaseAddDoc, firebaseOnSnapshot,
             firebaseDoc, firebaseGetDoc, firebaseUpdateDoc, firebaseQuery, firebaseWhere, firebaseServerTimestamp,
-            firebaseGetDocs
+            firebaseGetDocs, firebaseDeleteDoc
         } = window;
 
         const App = () => {
-            // currentMode ahora puede ser: 'menu', 'individual', 'multiplayerLobby', 'multiplayerRoom', 'multiplayerGame'
             const [currentMode, setCurrentMode] = React.useState('menu'); 
-            const [gameState, setGameState] = React.useState('idle'); // 'idle', 'countdown', 'wait', 'green', 'result'
+            const [gameState, setGameState] = React.useState('idle'); 
             const [countdownValue, setCountdownValue] = React.useState(3);
             const [startTime, setStartTime] = React.useState(0);
             const [userName, setUserName] = React.useState('');
@@ -155,9 +156,9 @@
             // Estados para el Multijugador
             const [roomNameInput, setRoomNameInput] = React.useState('');
             const [passwordInput, setPasswordInput] = React.useState('');
-            const [currentRoomId, setCurrentRoomId] = React.useState(null); // ID del documento de la sala activa en Firestore
-            const [roomData, setRoomData] = React.useState(null); // Datos de la sala de Firestore
-            const [isHost, setIsHost] = React.useState(false); // Si este cliente es el creador/host de la sala
+            const [currentRoomId, setCurrentRoomId] = React.useState(null); 
+            const [roomData, setRoomData] = React.useState(null); 
+            const [isHost, setIsHost] = React.useState(false); 
 
             // Refs para timeouts
             const countdownTimeoutRef = React.useRef(null);
@@ -200,12 +201,10 @@
                         console.log("Multiplayer Listener: Datos de la sala actualizados:", data);
                         setRoomData(data);
 
-                        // Si estamos en el lobby multijugador y la sala pasa a 'countdown', cambiar a multiplayerGame
                         if (currentMode === 'multiplayerRoom' && data.status === 'countdown') {
                             setCurrentMode('multiplayerGame');
                         }
 
-                        // Lógica de sincronización del juego desde el host
                         if (currentMode === 'multiplayerGame') {
                             if (data.status && data.status !== gameState) {
                                 setGameState(data.status);
@@ -255,7 +254,7 @@
                     unsubscribe();
                     clearAllTimeouts(); // Limpiar timeouts al salir de la sala
                 };
-            }, [isAuthReady, currentRoomId, currentMode, gameState, userId, isHost, startTime, countdownValue]); // Dependencias actualizadas para el listener de la sala
+            }, [isAuthReady, currentRoomId, currentMode, gameState, userId, isHost, startTime, countdownValue]); 
 
 
             // --------------------------------------------------
@@ -292,8 +291,7 @@
                 setReactionTime(0);
                 setStartTime(0);
                 clearAllTimeouts();
-                // Limpiar estados de multiplayer al cambiar de modo fuera del multiplayerLobby/Room/Game
-                if (currentMode === 'menu' || currentMode === 'individual') { // Solo limpiar si volvemos a modos no multiplayer
+                if (currentMode === 'menu' || currentMode === 'individual') { 
                     setCurrentRoomId(null);
                     setRoomData(null);
                     setIsHost(false);
@@ -424,14 +422,17 @@
                             falseStart: false
                         },
                         currentRoundStartTime: null,
-                        winnerName: null, // Inicializar winnerName
+                        winnerName: null, 
                         lastUpdated: firebaseServerTimestamp()
                     };
                     const docRef = await firebaseAddDoc(roomsRef, newRoomData);
                     setCurrentRoomId(docRef.id);
                     setIsHost(true);
+                    // Establecer roomData inmediatamente para que el componente multiplayerRoom pueda renderizar
+                    setRoomData(newRoomData); 
                     setCurrentMode('multiplayerRoom'); // Cambiar al nuevo modo de sala
-                    displayMessageBox(`Sala '${roomNameInput}' creada exitosamente. Esperando al Jugador 2...`);
+                    // Eliminado el displayMessageBox aquí, ya que el usuario ya está en la sala.
+                    // displayMessageBox(`Sala '${roomNameInput}' creada exitosamente. Esperando al Jugador 2...`);
                 } catch (e) {
                     console.error("Error al crear sala:", e);
                     displayMessageBox("Error al crear la sala: " + e.message);
@@ -469,7 +470,8 @@
                          displayMessageBox("Ya estás en esta sala.");
                          setCurrentRoomId(roomDoc.id);
                          setIsHost(data.hostId === userId);
-                         setCurrentMode('multiplayerRoom'); // Cambiar al nuevo modo de sala
+                         setCurrentMode('multiplayerRoom'); 
+                         setRoomData(data); // Asegurarse de establecer roomData si ya estás en la sala
                          return;
                     }
                     if (data.player2.id !== null) {
@@ -489,7 +491,12 @@
                     });
                     setCurrentRoomId(roomDoc.id);
                     setIsHost(false);
-                    setCurrentMode('multiplayerRoom'); // Cambiar al nuevo modo de sala
+                    // Actualizar roomData localmente para la transición fluida
+                    setRoomData({
+                        ...data, // Copia los datos existentes de la sala
+                        player2: { id: userId, name: userName, ready: false, reactionTime: 0, falseStart: false }
+                    });
+                    setCurrentMode('multiplayerRoom');
                     displayMessageBox(`Te has unido a la sala '${roomNameInput}' exitosamente.`);
                 } catch (e) {
                     console.error("Error al unirse a sala:", e);
@@ -538,7 +545,6 @@
                         winnerName: null,
                         lastUpdated: firebaseServerTimestamp()
                     });
-                    // El listener de roomData ahora manejará la transición a 'multiplayerGame'
                 } catch (e) {
                     console.error("Error al iniciar juego multiplayer:", e);
                     displayMessageBox("Error al iniciar el juego: " + e.message);
@@ -586,7 +592,7 @@
                     }
                 }
                 return () => clearAllTimeouts();
-            }, [roomData, isHost, currentMode, currentRoomId, dbRef, appId]); // Añadidos currentRoomId, dbRef, appId a dependencias
+            }, [roomData, isHost, currentMode, currentRoomId, dbRef, appId]);
 
             const recordMultiplayerReaction = async (playerNum) => {
                 if (currentMode !== 'multiplayerGame' || !isAuthReady || !dbRef.current || !currentRoomId || !roomData) return;
@@ -621,14 +627,12 @@
             };
 
             const determineMultiplayerResults = async () => {
-                // Asegúrate de que solo el host calcule y actualice esto, y que el estado ya sea 'result' o 'green'
                 if (!isHost || !roomData || (roomData.status !== 'result' && roomData.status !== 'green')) return;
 
-                let p1 = { ...roomData.player1 }; // Copias para evitar mutación directa del estado de roomData
+                let p1 = { ...roomData.player1 }; 
                 let p2 = { ...roomData.player2 };
                 let winnerName = null;
 
-                // Si aún no han reaccionado y el estado es 'green', asumimos que no reaccionaron a tiempo
                 if (p1.reactionTime === 0 && !p1.falseStart && roomData.status === 'green') p1.reactionTime = 9999;
                 if (p2.reactionTime === 0 && !p2.falseStart && roomData.status === 'green') p2.reactionTime = 9999;
 
@@ -709,7 +713,7 @@
                 const roomDocRef = firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`);
                 try {
                     if (isHost) {
-                        await firebaseDoc(dbRef.current, `artifacts/${appId.current}/public/data/rooms/${currentRoomId}`).delete(); 
+                        await firebaseDeleteDoc(roomDocRef); 
                         console.log("Multiplayer: Sala eliminada por el host.");
                         displayMessageBox("Has cerrado la sala.");
                     } else {
@@ -727,7 +731,7 @@
                     setCurrentRoomId(null);
                     setRoomData(null);
                     setIsHost(false);
-                    setCurrentMode('menu'); // Vuelve al menú principal después de salir
+                    setCurrentMode('menu'); 
                     clearAllTimeouts();
                 }
             };
@@ -740,7 +744,6 @@
                 const handleKeyDown = (event) => {
                     if (event.code === 'Space') {
                         event.preventDefault();
-                        // Solo para modos individuales/locales
                         if (currentMode === 'individual' || currentMode === 'multiplayer') { 
                             if (gameState === 'idle') {
                                 handleStartIndividualGame(currentMode);
@@ -750,13 +753,12 @@
                                 resetIndividualGame();
                             }
                         }
-                        // En multiplayer online, los clics en la pantalla o botones manejan la reacción
                     }
                 };
 
                 window.addEventListener('keydown', handleKeyDown);
                 return () => window.removeEventListener('keydown', handleKeyDown);
-            }, [gameState, userName, currentMode, reactionTime, userId, isHost, roomData]); // Añadidos roomData, userId, isHost a dependencias para recordMultiplayerReaction
+            }, [gameState, userName, currentMode, reactionTime, userId, isHost, roomData]); 
 
             // --------------------------------------------------
             // Helper for Background Color
@@ -772,7 +774,7 @@
                         case 'result':
                             return 'bg-blue-600';
                         default:
-                            return 'bg-gray-800'; // Lobby color (should transition away from lobby before game starts)
+                            return 'bg-gray-800'; 
                     }
                 } else if (currentMode === 'individual' || currentMode === 'multiplayer') {
                     switch (gameState) {
@@ -789,7 +791,7 @@
                             return 'bg-gray-800';
                     }
                 }
-                return 'bg-gray-800'; // Default for menu/multiplayer lobby/room
+                return 'bg-gray-800'; 
             };
 
             // --------------------------------------------------
@@ -969,6 +971,11 @@
                                 maxLength="20"
                             />
                             
+                            {/* Mensaje añadido aquí */}
+                            <p className="text-yellow-400 text-center text-lg font-bold">
+                                Para crear una sala, introduce los datos y pulsa "Crear Sala".
+                            </p>
+
                             <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 w-full">
                                 <button
                                     onClick={createRoom}
@@ -995,56 +1002,62 @@
                     )}
 
                     {/* Multiplayer Room (Lobby after joining/creating) */}
-                    {currentMode === 'multiplayerRoom' && currentRoomId && roomData && (
+                    {currentMode === 'multiplayerRoom' && ( 
                          <div className="w-full max-w-md mt-8 p-6 bg-gray-700 rounded-xl shadow-2xl border border-gray-600 flex flex-col items-center space-y-6">
-                            <h3 className="text-3xl font-bold text-center text-yellow-300 mb-4">Sala: {roomData.roomId}</h3>
-                            <p className="text-xl text-center mb-6">Tu ID de usuario: <span className="font-bold text-green-300 break-all">{userId || "Cargando..."}</span></p>
+                            {!currentRoomId || !roomData ? ( 
+                                <p className="text-xl text-center text-yellow-300">Cargando detalles de la sala...</p>
+                            ) : (
+                                <> 
+                                    <h3 className="text-3xl font-bold text-center text-yellow-300 mb-4">Sala: {roomData.roomId}</h3>
+                                    <p className="text-xl text-center mb-6">Tu ID de usuario: <span className="font-bold text-green-300 break-all">{userId || "Cargando..."}</span></p>
 
-                            <p className="text-lg text-center mb-4">Estado: {
-                                roomData.status === 'waiting' ? 'Esperando jugadores...' :
-                                roomData.status === 'countdown' ? `Iniciando: ${roomData.countdownValue}` :
-                                roomData.status === 'playing' ? 'En juego' :
-                                roomData.status === 'result' ? 'Resultados' :
-                                'Desconocido'
-                            }</p>
-                            <div className="flex justify-around items-center text-xl font-semibold w-full mb-6">
-                                <div className="text-center">
-                                    <p className="text-blue-300">{roomData.player1.name || "Esperando..."}</p>
-                                    <p className={`${roomData.player1.ready ? 'text-green-400' : 'text-red-400'}`}>
-                                        {roomData.player1.ready ? 'LISTO' : 'NO LISTO'}
-                                    </p>
-                                </div>
-                                <div className="text-center">
-                                    <p className="text-blue-300">{roomData.player2.name || "Esperando..."}</p>
-                                    <p className={`${roomData.player2.ready ? 'text-green-400' : 'text-red-400'}`}>
-                                        {roomData.player2.ready ? 'LISTO' : 'NO LISTO'}
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="flex flex-col space-y-4 w-full">
-                                <button
-                                    onClick={toggleReadyStatus}
-                                    disabled={roomData.player1.id !== userId && roomData.player2.id !== userId}
-                                    className="w-full bg-orange-500 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
-                                >
-                                    {(roomData.player1.id === userId && roomData.player1.ready) || (roomData.player2.id === userId && roomData.player2.ready) ? 'Deshacer Listo' : 'Listo'}
-                                </button>
-                                {isHost && (
-                                    <button
-                                        onClick={startGameMultiplayer}
-                                        disabled={!roomData.player1.ready || !roomData.player2.ready || roomData.status !== 'waiting'}
-                                        className="w-full bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
-                                    >
-                                        Empezar Duelo
-                                    </button>
-                                )}
-                                <button
-                                    onClick={leaveRoom}
-                                    className="w-full bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full text-lg transition duration-300 transform hover:scale-105 shadow-lg"
-                                >
-                                    {isHost ? 'Cerrar Sala' : 'Salir de Sala'}
-                                </button>
-                            </div>
+                                    <p className="text-lg text-center mb-4">Estado: {
+                                        roomData.status === 'waiting' ? 'Esperando jugadores...' :
+                                        roomData.status === 'countdown' ? `Iniciando: ${roomData.countdownValue}` :
+                                        roomData.status === 'playing' ? 'En juego' :
+                                        roomData.status === 'result' ? 'Resultados' :
+                                        'Desconocido'
+                                    }</p>
+                                    <div className="flex justify-around items-center text-xl font-semibold w-full mb-6">
+                                        <div className="text-center">
+                                            <p className="text-blue-300">{roomData.player1.name || "Esperando..."}</p>
+                                            <p className={`${roomData.player1.ready ? 'text-green-400' : 'text-red-400'}`}>
+                                                {roomData.player1.ready ? 'LISTO' : 'NO LISTO'}
+                                            </p>
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-blue-300">{roomData.player2.name || "Esperando..."}</p>
+                                            <p className={`${roomData.player2.ready ? 'text-green-400' : 'text-red-400'}`}>
+                                                {roomData.player2.ready ? 'LISTO' : 'NO LISTO'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col space-y-4 w-full">
+                                        <button
+                                            onClick={toggleReadyStatus}
+                                            disabled={roomData.player1.id !== userId && roomData.player2.id !== userId}
+                                            className="w-full bg-orange-500 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                        >
+                                            {(roomData.player1.id === userId && roomData.player1.ready) || (roomData.player2.id === userId && roomData.player2.ready) ? 'Deshacer Listo' : 'Listo'}
+                                        </button>
+                                        {isHost && (
+                                            <button
+                                                onClick={startGameMultiplayer}
+                                                disabled={!roomData.player1.ready || !roomData.player2.ready || roomData.status !== 'waiting'}
+                                                className="w-full bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full text-xl transition duration-300 transform hover:scale-105 shadow-lg"
+                                            >
+                                                Empezar Duelo
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={leaveRoom}
+                                            className="w-full bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full text-lg transition duration-300 transform hover:scale-105 shadow-lg"
+                                        >
+                                            {isHost ? 'Cerrar Sala' : 'Salir de Sala'}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
 
@@ -1052,7 +1065,7 @@
                     {currentMode === 'multiplayerGame' && roomData && (
                         <div
                             className="relative flex flex-col items-center justify-center w-full max-w-4xl h-[70vh] rounded-xl shadow-2xl p-6 cursor-pointer"
-                            onClick={() => recordMultiplayerReaction(roomData.player1.id === userId ? 1 : 2)} // Pasa 1 o 2 según quién sea el jugador local
+                            onClick={() => recordMultiplayerReaction(roomData.player1.id === userId ? 1 : 2)}
                         >
                             {roomData.status === 'countdown' && (
                                 <h2 className="text-8xl font-black animate-pulse">{roomData.countdownValue}</h2>
